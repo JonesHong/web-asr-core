@@ -1,0 +1,543 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2025-08-10",
+  "description": "Global model registry for voice assistant models - GitHub Pages version (quantized models only)",
+  "model_types": {
+    "asr": {
+      "name": "Automatic Speech Recognition",
+      "description": "Speech-to-text models"
+    },
+    "wakeword": {
+      "name": "Wake Word Detection",
+      "description": "Keyword spotting models"
+    },
+    "vad": {
+      "name": "Voice Activity Detection",
+      "description": "Speech presence detection models"
+    },
+    "tts": {
+      "name": "Text-to-Speech",
+      "description": "Speech synthesis models"
+    },
+    "nlp": {
+      "name": "Natural Language Processing",
+      "description": "Language understanding models"
+    }
+  },
+  "sources": {
+    "huggingface": {
+      "base_url": "https://huggingface.co",
+      "api_url": "https://huggingface.co/api"
+    },
+    "github": {
+      "base_url": "https://github.com",
+      "raw_url": "https://raw.githubusercontent.com"
+    },
+    "local": {
+      "base_path": "./models"
+    }
+  },
+  "models": [
+    {
+      "id": "whisper-tiny",
+      "name": "Whisper Tiny",
+      "type": "asr",
+      "source": {
+        "platform": "huggingface",
+        "author": "Xenova",
+        "repository": "whisper-tiny",
+        "url": "https://huggingface.co/Xenova/whisper-tiny"
+      },
+      "local_path": "huggingface/Xenova/whisper-tiny",
+      "description": "Smallest Whisper model, fastest inference",
+      "features": {
+        "multilingual": true,
+        "languages": [
+          "multi"
+        ],
+        "input_format": "audio/wav",
+        "output_format": "text",
+        "sample_rate": 16000
+      },
+      "specs": {
+        "size_mb": 39,
+        "parameters": "39M",
+        "quantized": true,
+        "format": "onnx"
+      },
+      "performance": {
+        "wer": 15.0,
+        "speed_multiplier": 10,
+        "gpu_required": false
+      },
+      "files": {
+        "required": [
+          "onnx/encoder_model_quantized.onnx",
+          "onnx/decoder_model_merged_quantized.onnx",
+          "config.json",
+          "tokenizer.json"
+        ],
+        "optional": [
+          "vocab.json",
+          "merges.txt",
+          "normalizer.json",
+          "preprocessor_config.json",
+          "generation_config.json"
+        ]
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true,
+        "download_date": "2025-08-03",
+        "last_used": null
+      },
+      "tags": [
+        "whisper",
+        "tiny",
+        "fast",
+        "lightweight"
+      ]
+    },
+    {
+      "id": "whisper-tiny-en",
+      "name": "Whisper Tiny English",
+      "type": "asr",
+      "source": {
+        "platform": "huggingface",
+        "author": "Xenova",
+        "repository": "whisper-tiny.en",
+        "url": "https://huggingface.co/Xenova/whisper-tiny.en"
+      },
+      "local_path": "huggingface/Xenova/whisper-tiny.en",
+      "description": "English-only tiny model with improved accuracy",
+      "features": {
+        "multilingual": false,
+        "languages": [
+          "en"
+        ],
+        "input_format": "audio/wav",
+        "output_format": "text",
+        "sample_rate": 16000
+      },
+      "specs": {
+        "size_mb": 39,
+        "parameters": "39M",
+        "quantized": true,
+        "format": "onnx"
+      },
+      "performance": {
+        "wer": 12.0,
+        "speed_multiplier": 10,
+        "gpu_required": false
+      },
+      "files": {
+        "required": [
+          "onnx/encoder_model_quantized.onnx",
+          "onnx/decoder_model_merged_quantized.onnx",
+          "config.json",
+          "tokenizer.json",
+          "vocab.json",
+          "merges.txt",
+          "normalizer.json",
+          "preprocessor_config.json",
+          "generation_config.json"
+        ],
+        "optional": [
+          "model_info.json",
+          "added_tokens.json",
+          "special_tokens_map.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true,
+        "download_date": "2025-08-08"
+      },
+      "tags": [
+        "whisper",
+        "tiny",
+        "english",
+        "fast"
+      ]
+    },
+    {
+      "id": "whisper-base",
+      "name": "Whisper Base",
+      "type": "asr",
+      "source": {
+        "platform": "huggingface",
+        "author": "Xenova",
+        "repository": "whisper-base",
+        "url": "https://huggingface.co/Xenova/whisper-base"
+      },
+      "local_path": "huggingface/Xenova/whisper-base",
+      "description": "Base model with good balance of speed and accuracy",
+      "features": {
+        "multilingual": true,
+        "languages": [
+          "multi"
+        ],
+        "input_format": "audio/wav",
+        "output_format": "text",
+        "sample_rate": 16000
+      },
+      "specs": {
+        "size_mb": 74,
+        "parameters": "74M",
+        "quantized": true,
+        "format": "onnx"
+      },
+      "performance": {
+        "wer": 12.0,
+        "speed_multiplier": 7,
+        "gpu_required": false
+      },
+      "files": {
+        "required": [
+          "onnx/encoder_model_quantized.onnx",
+          "onnx/decoder_model_merged_quantized.onnx",
+          "config.json",
+          "tokenizer.json",
+          "vocab.json",
+          "merges.txt",
+          "normalizer.json",
+          "preprocessor_config.json",
+          "generation_config.json"
+        ],
+        "optional": [
+          "model_info.json",
+          "added_tokens.json",
+          "special_tokens_map.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true,
+        "download_date": "2025-08-03"
+      },
+      "tags": [
+        "whisper",
+        "base",
+        "balanced"
+      ]
+    },
+    {
+      "id": "whisper-base-en",
+      "name": "Whisper Base English",
+      "type": "asr",
+      "source": {
+        "platform": "huggingface",
+        "author": "Xenova",
+        "repository": "whisper-base.en",
+        "url": "https://huggingface.co/Xenova/whisper-base.en"
+      },
+      "local_path": "huggingface/Xenova/whisper-base.en",
+      "description": "English-only base model with optimized performance",
+      "features": {
+        "multilingual": false,
+        "languages": [
+          "en"
+        ],
+        "input_format": "audio/wav",
+        "output_format": "text",
+        "sample_rate": 16000
+      },
+      "specs": {
+        "size_mb": 74,
+        "parameters": "74M",
+        "quantized": true,
+        "format": "onnx"
+      },
+      "performance": {
+        "wer": 10.0,
+        "speed_multiplier": 7,
+        "gpu_required": false
+      },
+      "files": {
+        "required": [
+          "onnx/encoder_model_quantized.onnx",
+          "onnx/decoder_model_merged_quantized.onnx",
+          "config.json",
+          "tokenizer.json",
+          "vocab.json",
+          "merges.txt",
+          "normalizer.json",
+          "preprocessor_config.json",
+          "generation_config.json"
+        ],
+        "optional": [
+          "model_info.json",
+          "added_tokens.json",
+          "special_tokens_map.json",
+          "tokenizer_config.json"
+        ]
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true,
+        "download_date": "2025-08-08"
+      },
+      "tags": [
+        "whisper",
+        "base",
+        "english",
+        "balanced"
+      ]
+    },
+   
+    {
+      "id": "hey-jarvis",
+      "name": "Hey Jarvis Wake Word",
+      "type": "wakeword",
+      "source": {
+        "platform": "github",
+        "author": "dscripka",
+        "repository": "openWakeWord",
+        "url": "https://github.com/dscripka/openWakeWord",
+        "release": "v0.1"
+      },
+      "local_path": "github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx",
+      "description": "Wake word detection model for 'Hey Jarvis'",
+      "features": {
+        "wake_phrase": "Hey Jarvis",
+        "languages": [
+          "en"
+        ],
+        "input_format": "audio/pcm",
+        "sample_rate": 16000,
+        "chunk_size": 1280
+      },
+      "specs": {
+        "size_mb": 1.2,
+        "format": "onnx",
+        "threshold": 0.5
+      },
+      "performance": {
+        "false_positive_rate": 0.05,
+        "true_positive_rate": 0.95,
+        "latency_ms": 10
+      },
+      "files": {
+        "required": [
+          "hey_jarvis_v0.1.onnx",
+          "embedding_model.onnx",
+          "melspectrogram.onnx"
+        ],
+        "optional": []
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true,
+        "download_date": "2025-08-01"
+      },
+      "tags": [
+        "wakeword",
+        "jarvis",
+        "openwakeword"
+      ]
+    },
+    {
+      "id": "alexa-wakeword",
+      "name": "Alexa Wake Word",
+      "type": "wakeword",
+      "source": {
+        "platform": "github",
+        "author": "dscripka",
+        "repository": "openWakeWord",
+        "url": "https://github.com/dscripka/openWakeWord"
+      },
+      "local_path": "github/dscripka/openWakeWord/alexa_v0.1.onnx",
+      "description": "Wake word detection model for 'Alexa'",
+      "features": {
+        "wake_phrase": "Alexa",
+        "languages": [
+          "en"
+        ],
+        "input_format": "audio/pcm",
+        "sample_rate": 16000
+      },
+      "specs": {
+        "size_mb": 1.2,
+        "format": "onnx",
+        "threshold": 0.5
+      },
+      "files": {
+        "required": [
+          "alexa_v0.1.onnx",
+          "embedding_model.onnx",
+          "melspectrogram.onnx"
+        ],
+        "optional": []
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true
+      },
+      "tags": [
+        "wakeword",
+        "alexa",
+        "openwakeword"
+      ]
+    },
+    {
+      "id": "hey-mycroft",
+      "name": "Hey Mycroft Wake Word",
+      "type": "wakeword",
+      "source": {
+        "platform": "github",
+        "author": "dscripka",
+        "repository": "openWakeWord",
+        "url": "https://github.com/dscripka/openWakeWord",
+        "release": "v0.1"
+      },
+      "local_path": "github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx",
+      "description": "Wake word detection model for 'Hey Mycroft'",
+      "features": {
+        "wake_phrase": "Hey Mycroft",
+        "languages": [
+          "en"
+        ],
+        "input_format": "audio/pcm",
+        "sample_rate": 16000,
+        "chunk_size": 1280
+      },
+      "specs": {
+        "size_mb": 1.2,
+        "format": "onnx",
+        "threshold": 0.5
+      },
+      "performance": {
+        "false_positive_rate": 0.05,
+        "true_positive_rate": 0.95,
+        "latency_ms": 10
+      },
+      "files": {
+        "required": [
+          "hey_mycroft_v0.1.onnx",
+          "embedding_model.onnx",
+          "melspectrogram.onnx"
+        ],
+        "optional": []
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true,
+        "download_date": "2025-08-08"
+      },
+      "tags": [
+        "wakeword",
+        "mycroft",
+        "openwakeword"
+      ]
+    },
+    {
+      "id": "hi-kmu",
+      "name": "Hi KMU Wake Word",
+      "type": "wakeword",
+      "source": {
+        "platform": "huggingface",
+        "author": "JTBTechnology",
+        "repository": "kmu_wakeword",
+        "url": "https://huggingface.co/JTBTechnology/kmu_wakeword"
+      },
+      "local_path": "huggingface/JTBTechnology/kmu_wakeword/hi_kmu_0721.onnx",
+      "description": "Wake word detection model for 'Hi KMU'",
+      "features": {
+        "wake_phrase": "Hi KMU",
+        "languages": [
+          "en"
+        ],
+        "input_format": "audio/pcm",
+        "sample_rate": 16000
+      },
+      "specs": {
+        "size_mb": 1.5,
+        "format": "onnx",
+        "threshold": 0.5
+      },
+      "files": {
+        "required": [
+          "hi_kmu_0721.onnx",
+          "embedding_model.onnx",
+          "melspectrogram.onnx"
+        ],
+        "optional": []
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true,
+        "download_date": "2025-08-08"
+      },
+      "tags": [
+        "wakeword",
+        "kmu",
+        "custom"
+      ]
+    },
+    {
+      "id": "silero-vad",
+      "name": "Silero VAD",
+      "type": "vad",
+      "source": {
+        "platform": "github",
+        "author": "snakers4",
+        "repository": "silero-vad",
+        "url": "https://github.com/snakers4/silero-vad"
+      },
+      "local_path": "github/snakers4/silero-vad/silero_vad.onnx",
+      "description": "Voice Activity Detection model",
+      "features": {
+        "languages": [
+          "multi"
+        ],
+        "input_format": "audio/pcm",
+        "sample_rate": 16000,
+        "chunk_size": 512
+      },
+      "specs": {
+        "size_mb": 1.8,
+        "format": "onnx"
+      },
+      "performance": {
+        "accuracy": 0.99,
+        "latency_ms": 1
+      },
+      "files": {
+        "required": [
+          "silero_vad.onnx"
+        ],
+        "optional": []
+      },
+      "status": {
+        "downloaded": true,
+        "verified": true
+      },
+      "tags": [
+        "vad",
+        "silero",
+        "voice-detection"
+      ]
+    }
+    
+  ],
+  "statistics": {
+    "total_models": 9,
+    "by_type": {
+      "asr": 4,
+      "wakeword": 4,
+      "vad": 1,
+      "tts": 0,
+      "nlp": 0
+    },
+    "by_source": {
+      "huggingface": 4,
+      "github": 5,
+      "local": 0
+    },
+    "total_size_mb": 0,
+    "downloaded_models": 9,
+    "pending_models": 0
+  }
+}

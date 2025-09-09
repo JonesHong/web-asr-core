@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音訊健康檢查工具</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1e1e1e;
+            color: #e0e0e0;
+        }
+        h1 { color: #4CAF50; }
+        h2 { color: #2196F3; margin-top: 30px; }
+        .container {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .status-item {
+            background: #333;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #555;
+        }
+        .status-item.good { border-left-color: #4CAF50; }
+        .status-item.warning { border-left-color: #FF9800; }
+        .status-item.error { border-left-color: #f44336; }
+        .status-label {
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        .status-value {
+            font-size: 20px;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+            transition: background 0.3s;
+        }
+        button:hover { background: #45a049; }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        button.stop { background: #f44336; }
+        button.stop:hover { background: #da190b; }
+        #log {
+            background: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.5;
+        }
+        .log-entry { margin: 5px 0; padding: 5px; border-left: 3px solid transparent; }
+        .log-info { border-left-color: #2196F3; }
+        .log-warning { border-left-color: #FF9800; color: #FFB74D; }
+        .log-error { border-left-color: #f44336; color: #EF5350; }
+        .log-success { border-left-color: #4CAF50; color: #66BB6A; }
+        canvas {
+            width: 100%;
+            height: 150px;
+            background: #1a1a1a;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .setting-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            background: #333;
+            border-radius: 5px;
+        }
+        .setting-item label {
+            margin-right: 10px;
+            flex: 1;
+        }
+        .setting-item input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        .alert {
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            display: none;
+        }
+        .alert.show { display: block; }
+        .alert.success { background: #4CAF50; }
+        .alert.error { background: #f44336; }
+        .alert.warning { background: #FF9800; }
+    </style>
+</head>
+<body>
+    <h1>🎤 WebASRCore 音訊健康檢查工具</h1>
+    
+    <div class="container">
+        <h2>⚙️ 音訊設定</h2>
+        <div class="settings-grid">
+            <div class="setting-item">
+                <label for="echoCancellation">回音消除</label>
+                <input type="checkbox" id="echoCancellation">
+            </div>
+            <div class="setting-item">
+                <label for="noiseSuppression">噪音抑制</label>
+                <input type="checkbox" id="noiseSuppression">
+            </div>
+            <div class="setting-item">
+                <label for="autoGainControl">自動增益控制</label>
+                <input type="checkbox" id="autoGainControl">
+            </div>
+        </div>
+        <div class="alert warning">
+            ⚠️ 建議關閉所有音訊處理以獲得原始音訊信號，避免喚醒詞誤觸發
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>📊 即時音訊統計</h2>
+        <canvas id="waveform"></canvas>
+        <div class="status-grid">
+            <div class="status-item" id="rmsStatus">
+                <div class="status-label">RMS 振幅</div>
+                <div class="status-value" id="rmsValue">--</div>
+            </div>
+            <div class="status-item" id="dbfsStatus">
+                <div class="status-label">dBFS 音量</div>
+                <div class="status-value" id="dbfsValue">-- dB</div>
+            </div>
+            <div class="status-item" id="maxAbsStatus">
+                <div class="status-label">最大振幅</div>
+                <div class="status-value" id="maxAbsValue">--</div>
+            </div>
+            <div class="status-item" id="fillRateStatus">
+                <div class="status-label">非零樣本率</div>
+                <div class="status-value" id="fillRateValue">-- %</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h2>🎯 控制面板</h2>
+        <button onclick="startTest()">開始測試</button>
+        <button onclick="stopTest()" class="stop">停止測試</button>
+        <button onclick="testWakeWord()">測試喚醒詞</button>
+        <button onclick="clearLog()">清除日誌</button>
+        <button onclick="downloadLog()">下載日誌</button>
+    </div>
+
+    <div class="container">
+        <h2>📝 測試日誌</h2>
+        <div id="log"></div>
+    </div>
+
+    <script type="module">
+        import * as WebASRCore from './dist/web-asr-core.bundle.js';
+        
+        window.WebASRCore = WebASRCore;
+        
+        let audioContext = null;
+        let source = null;
+        let processor = null;
+        let animationId = null;
+        let isRunning = false;
+        let logEntries = [];
+        
+        // 統計數據
+        let stats = {
+            totalSamples: 0,
+            silentSamples: 0,
+            lowSamples: 0,
+            normalSamples: 0,
+            highSamples: 0,
+            avgRMS: 0,
+            avgDBFS: 0,
+            minDBFS: 0,
+            maxDBFS: -100,
+            wakewordTriggers: 0,
+            falsePositives: 0
+        };
+        
+        function addLog(message, type = 'info') {
+            const time = new Date().toLocaleTimeString('zh-TW', { hour12: false, milliseconds: true });
+            const entry = { time, message, type };
+            logEntries.push(entry);
+            
+            const logDiv = document.getElementById('log');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry log-${type}`;
+            logEntry.textContent = `[${time}] ${message}`;
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+        
+        function updateStatus(elementId, value, level = 'normal') {
+            const statusItem = document.getElementById(elementId);
+            const valueElement = document.getElementById(elementId.replace('Status', 'Value'));
+            
+            valueElement.textContent = value;
+            
+            statusItem.classList.remove('good', 'warning', 'error');
+            if (level === 'good') statusItem.classList.add('good');
+            else if (level === 'warning') statusItem.classList.add('warning');
+            else if (level === 'error') statusItem.classList.add('error');
+        }
+        
+        function analyzeAudioChunk(audioData) {
+            const samples = audioData.length;
+            let sum = 0;
+            let maxAbs = 0;
+            let nonZeroCount = 0;
+            
+            for (let i = 0; i < samples; i++) {
+                const abs = Math.abs(audioData[i]);
+                sum += abs * abs;
+                if (abs > maxAbs) maxAbs = abs;
+                if (abs > 0.0001) nonZeroCount++;
+            }
+            
+            const rms = Math.sqrt(sum / samples);
+            const dbfs = 20 * Math.log10(Math.max(rms, 1e-9));
+            const fillRate = (nonZeroCount / samples) * 100;
+            
+            // 更新統計
+            stats.totalSamples++;
+            if (maxAbs < 0.001) stats.silentSamples++;
+            else if (maxAbs < 0.01) stats.lowSamples++;
+            else if (maxAbs < 0.1) stats.normalSamples++;
+            else stats.highSamples++;
+            
+            stats.avgRMS = (stats.avgRMS * (stats.totalSamples - 1) + rms) / stats.totalSamples;
+            stats.avgDBFS = (stats.avgDBFS * (stats.totalSamples - 1) + dbfs) / stats.totalSamples;
+            if (dbfs < stats.minDBFS) stats.minDBFS = dbfs;
+            if (dbfs > stats.maxDBFS) stats.maxDBFS = dbfs;
+            
+            // 更新 UI
+            updateStatus('rmsStatus', rms.toFixed(6), 
+                rms > 0.01 ? 'good' : rms > 0.001 ? 'warning' : 'error');
+            updateStatus('dbfsStatus', `${dbfs.toFixed(1)} dB`,
+                dbfs > -40 ? 'good' : dbfs > -60 ? 'warning' : 'error');
+            updateStatus('maxAbsStatus', maxAbs.toFixed(6),
+                maxAbs > 0.01 ? 'good' : maxAbs > 0.001 ? 'warning' : 'error');
+            updateStatus('fillRateStatus', `${fillRate.toFixed(1)} %`,
+                fillRate > 50 ? 'good' : fillRate > 10 ? 'warning' : 'error');
+            
+            // 檢測異常
+            if (maxAbs < 0.001 && stats.totalSamples % 100 === 0) {
+                addLog(`⚠️ 檢測到靜音：maxAbs=${maxAbs.toFixed(6)}, RMS=${rms.toFixed(6)}`, 'warning');
+            }
+            
+            return { rms, dbfs, maxAbs, fillRate };
+        }
+        
+        function drawWaveform(audioData) {
+            const canvas = document.getElementById('waveform');
+            const ctx = canvas.getContext('2d');
+            const width = canvas.width;
+            const height = canvas.height;
+            
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(0, 0, width, height);
+            
+            ctx.strokeStyle = '#4CAF50';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            const samples = audioData.length;
+            const step = Math.ceil(samples / width);
+            
+            for (let i = 0; i < width; i++) {
+                const index = i * step;
+                const value = audioData[index] || 0;
+                const y = (1 - value) * height / 2;
+                
+                if (i === 0) ctx.moveTo(i, y);
+                else ctx.lineTo(i, y);
+            }
+            
+            ctx.stroke();
+            
+            // 繪製中線
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, height / 2);
+            ctx.lineTo(width, height / 2);
+            ctx.stroke();
+        }
+        
+        window.startTest = async function() {
+            if (isRunning) {
+                addLog('測試已在運行中', 'warning');
+                return;
+            }
+            
+            try {
+                addLog('🚀 開始音訊健康檢查...', 'info');
+                
+                // 取得音訊設定
+                const echoCancellation = document.getElementById('echoCancellation').checked;
+                const noiseSuppression = document.getElementById('noiseSuppression').checked;
+                const autoGainControl = document.getElementById('autoGainControl').checked;
+                
+                addLog(`音訊設定: 回音消除=${echoCancellation}, 噪音抑制=${noiseSuppression}, 自動增益=${autoGainControl}`, 'info');
+                
+                // 請求麥克風權限
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation,
+                        noiseSuppression,
+                        autoGainControl
+                    }
+                });
+                
+                // 取得實際設定
+                const track = stream.getAudioTracks()[0];
+                const settings = track.getSettings();
+                addLog(`實際設定: ${JSON.stringify(settings)}`, 'info');
+                
+                // 檢查設定是否正確
+                if (settings.echoCancellation || settings.noiseSuppression || settings.autoGainControl) {
+                    addLog('⚠️ 警告：音訊處理未完全關閉，可能影響喚醒詞檢測', 'warning');
+                    document.querySelector('.alert.warning').classList.add('show');
+                } else {
+                    addLog('✅ 音訊處理已關閉，使用原始音訊', 'success');
+                }
+                
+                // 建立音訊處理
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                source = audioContext.createMediaStreamSource(stream);
+                processor = audioContext.createScriptProcessor(1280, 1, 1);
+                
+                processor.onaudioprocess = (e) => {
+                    const audioData = e.inputBuffer.getChannelData(0);
+                    analyzeAudioChunk(audioData);
+                    drawWaveform(audioData);
+                };
+                
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                isRunning = true;
+                addLog('✅ 音訊監測已啟動', 'success');
+                
+                // 定期輸出統計報告
+                setInterval(() => {
+                    if (!isRunning) return;
+                    
+                    const report = `
+統計報告 (${stats.totalSamples} 樣本):
+- 靜音樣本 (<0.001): ${((stats.silentSamples / stats.totalSamples) * 100).toFixed(1)}%
+- 低音量樣本 (0.001-0.01): ${((stats.lowSamples / stats.totalSamples) * 100).toFixed(1)}%
+- 正常樣本 (0.01-0.1): ${((stats.normalSamples / stats.totalSamples) * 100).toFixed(1)}%
+- 高音量樣本 (>0.1): ${((stats.highSamples / stats.totalSamples) * 100).toFixed(1)}%
+- 平均 RMS: ${stats.avgRMS.toFixed(6)}
+- 平均 dBFS: ${stats.avgDBFS.toFixed(1)} dB
+- dBFS 範圍: ${stats.minDBFS.toFixed(1)} ~ ${stats.maxDBFS.toFixed(1)} dB
+                    `.trim();
+                    
+                    addLog(report, 'info');
+                }, 10000);
+                
+            } catch (error) {
+                addLog(`❌ 錯誤: ${error.message}`, 'error');
+                console.error(error);
+            }
+        };
+        
+        window.stopTest = function() {
+            if (!isRunning) {
+                addLog('測試未運行', 'warning');
+                return;
+            }
+            
+            if (processor) {
+                processor.disconnect();
+                processor = null;
+            }
+            if (source) {
+                source.disconnect();
+                source = null;
+            }
+            if (audioContext) {
+                audioContext.close();
+                audioContext = null;
+            }
+            
+            isRunning = false;
+            addLog('⏹️ 測試已停止', 'info');
+        };
+        
+        window.testWakeWord = async function() {
+            addLog('🎯 測試喚醒詞檢測...', 'info');
+            
+            try {
+                // 載入註冊表
+                const registry = await WebASRCore.loadRegistry('./models/global_registry.json');
+                addLog('✅ 載入模型註冊表', 'success');
+                
+                // 載入配置
+                const config = new WebASRCore.ConfigManager();
+                
+                // 測試每個喚醒詞
+                for (const wakewordName of ['hey_jarvis', 'hey_mycroft', 'alexa']) {
+                    addLog(`測試 ${wakewordName}...`, 'info');
+                    
+                    try {
+                        const resources = await WebASRCore.loadWakewordResources(wakewordName, config);
+                        addLog(`✅ ${wakewordName} 模型載入成功`, 'success');
+                        
+                        // 建立測試音訊（靜音）
+                        const silentAudio = new Float32Array(1280);
+                        let state = WebASRCore.createWakewordState(resources.dims);
+                        
+                        // 測試 10 個靜音塊
+                        let maxScore = 0;
+                        for (let i = 0; i < 10; i++) {
+                            const result = await WebASRCore.processWakewordChunk(
+                                resources,
+                                state,
+                                silentAudio,
+                                { threshold: config.wakeword[wakewordName].threshold }
+                            );
+                            state = result.state;
+                            if (result.score > maxScore) maxScore = result.score;
+                            
+                            if (result.triggered) {
+                                addLog(`⚠️ ${wakewordName} 在靜音時誤觸發! 分數: ${result.score.toFixed(4)}`, 'error');
+                                stats.falsePositives++;
+                            }
+                        }
+                        
+                        addLog(`${wakewordName} 靜音最高分數: ${maxScore.toFixed(4)}`, maxScore > 0.1 ? 'warning' : 'success');
+                        
+                    } catch (error) {
+                        addLog(`❌ ${wakewordName} 測試失敗: ${error.message}`, 'error');
+                    }
+                }
+                
+            } catch (error) {
+                addLog(`❌ 喚醒詞測試失敗: ${error.message}`, 'error');
+                console.error(error);
+            }
+        };
+        
+        window.clearLog = function() {
+            document.getElementById('log').innerHTML = '';
+            logEntries = [];
+            addLog('日誌已清除', 'info');
+        };
+        
+        window.downloadLog = function() {
+            const content = logEntries.map(e => `[${e.time}] [${e.type.toUpperCase()}] ${e.message}`).join('\n');
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `audio-health-check-${new Date().toISOString().replace(/:/g, '-')}.log`;
+            a.click();
+            URL.revokeObjectURL(url);
+            addLog('日誌已下載', 'success');
+        };
+        
+        // 初始化
+        addLog('🎤 WebASRCore 音訊健康檢查工具已就緒', 'success');
+        addLog('建議：關閉所有音訊處理選項以獲得最佳喚醒詞檢測效果', 'warning');
+    </script>
+</body>
+</html>

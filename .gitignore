@@ -1,0 +1,107 @@
+# System files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+node_modules/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Temporary folders
+tmp/
+temp/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Browser cache and storage
+.cache/
+dist/
+build/
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+
+# Models folder - ignore all except essential models
+models/
+models/**/*.onnx
+models/**/*.json
+models/**/*.txt
+# Keep essential wake word and VAD models
+!models/
+!models/**/.gitkeep
+!models/README.md
+!models/global_registry.json
+!models/global_registry_github.json
+!models/github/
+!models/github/dscripka/
+!models/github/dscripka/openWakeWord/
+!models/github/dscripka/openWakeWord/alexa_v0.1.onnx
+!models/github/dscripka/openWakeWord/embedding_model.onnx
+!models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx
+!models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx
+!models/github/dscripka/openWakeWord/melspectrogram.onnx
+!models/github/snakers4/
+!models/github/snakers4/silero-vad/
+!models/github/snakers4/silero-vad/silero_vad.onnx
+# Keep whisper-tiny quantized models for GitHub Pages demo
+!models/huggingface/
+!models/huggingface/Xenova/
+!models/huggingface/Xenova/whisper-tiny/**
+models/huggingface/Xenova/whisper-tiny/onnx/decoder_model_merged.onnx
+models/huggingface/Xenova/whisper-tiny/onnx/encoder_model.onnx
+
+!models/huggingface/Xenova/whisper-tiny.en/**
+models/huggingface/Xenova/whisper-tiny.en/onnx/decoder_model_merged.onnx
+models/huggingface/Xenova/whisper-tiny.en/onnx/encoder_model.onnx
+
+!models/huggingface/Xenova/whisper-base/**
+models/huggingface/Xenova/whisper-base/onnx/decoder_model_merged.onnx
+models/huggingface/Xenova/whisper-base/onnx/encoder_model.onnx
+
+!models/huggingface/Xenova/whisper-base.en/**
+models/huggingface/Xenova/whisper-base.en/onnx/decoder_model_merged.onnx
+models/huggingface/Xenova/whisper-base.en/onnx/encoder_model.onnx
+
+
+# Jupyter notebooks
+reference/Open Wake Model.ipynb
+
+# Cloned repositories
+reference/whisper-web/
+reference/open_wake_word_web/
+reference/vad_script_tags/
+reference/web_speech_api/

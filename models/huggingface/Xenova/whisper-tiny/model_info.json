@@ -1,0 +1,22 @@
+{
+  "model_id": "Xenova/whisper-tiny",
+  "model_name": "whisper-tiny",
+  "download_date": "2025-08-03 00:09:29",
+  "files_downloaded": 14,
+  "files": [
+    "onnx/encoder_model.onnx",
+    "onnx/decoder_model_merged.onnx",
+    "onnx/encoder_model_quantized.onnx",
+    "onnx/decoder_model_merged_quantized.onnx",
+    "config.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "preprocessor_config.json",
+    "generation_config.json",
+    "special_tokens_map.json",
+    "vocab.json",
+    "merges.txt",
+    "normalizer.json",
+    "added_tokens.json"
+  ]
+}

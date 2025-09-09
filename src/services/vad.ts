@@ -12,6 +12,7 @@ import type { InferenceSession, Tensor } from 'onnxruntime-web';
 import { createSession, createTensor, type InferenceSession as Session } from '../runtime/ort';
 import type { VadState, VadParams, VadResult } from '../types';
 import { ConfigManager } from '../utils/config-manager';
+import { ortService } from './ort';
 
 /**
  * 載入 VAD 模型會話
@@ -42,16 +43,19 @@ export async function loadVadSession(
   sessionOptions?: InferenceSession.SessionOptions,
   config?: ConfigManager
 ): Promise<InferenceSession> {
-  const cfg = config || new ConfigManager();
+  const cfg = config || ConfigManager.getInstance();
   const url = modelUrl || cfg.vad.modelPath;
   
-  // 使用配置的效能設定
-  const options = sessionOptions || {
-    executionProviders: cfg.performance.executionProviders,
-    graphOptimizationLevel: cfg.performance.graphOptimizationLevel,
-  };
+  // 初始化 ORT 服務
+  await ortService.initialize();
   
-  return await createSession(url, options);
+  // 如果啟用 Web Worker，預載入模型
+  if (cfg.onnx.useWebWorker) {
+    await ortService.preloadModelInWorker('vad', url);
+  }
+  
+  // 使用優化的 ORT 服務創建會話
+  return await ortService.createSession(url, sessionOptions);
 }
 
 /**
@@ -114,7 +118,53 @@ export async function processVad(
   params: VadParams,
   config?: ConfigManager
 ): Promise<VadResult> {
-  const cfg = config || new ConfigManager();
+  const cfg = config || ConfigManager.getInstance();
+  
+  // 如果啟用 Web Worker，使用 Worker 執行推理
+  if (cfg.onnx.useWebWorker) {
+    try {
+      const result = await ortService.runInferenceInWorker(
+        'vad',
+        'vad',
+        cfg.vad.modelPath,
+        audio
+      );
+      
+      // 更新狀態
+      const newContextSamples = new Float32Array(cfg.vad.contextSize);
+      const startIdx = cfg.vad.windowSize - cfg.vad.contextSize;
+      newContextSamples.set(audio.slice(startIdx, startIdx + cfg.vad.contextSize));
+      
+      let isSpeechActive = prevState.isSpeechActive;
+      let hangoverCounter = prevState.hangoverCounter;
+      
+      if (result.result.isSpeech) {
+        isSpeechActive = true;
+        hangoverCounter = params.hangoverFrames;
+      } else if (isSpeechActive) {
+        hangoverCounter -= 1;
+        if (hangoverCounter <= 0) {
+          isSpeechActive = false;
+        }
+      }
+      
+      const state: VadState = {
+        state: prevState.state, // Worker 內部管理狀態
+        contextSamples: newContextSamples,
+        hangoverCounter,
+        isSpeechActive
+      };
+      
+      return {
+        detected: result.result.isSpeech,
+        score: result.result.probability,
+        state
+      };
+    } catch (error) {
+      console.warn('[VAD] Worker inference failed, falling back to main thread:', error);
+      // 如果 Worker 失敗，繼續使用主執行緒
+    }
+  }
   
   // Silero VAD v6 模型輸入規格：
   // - input: [1, 576] (64 個上下文樣本 + 512 個新樣本)

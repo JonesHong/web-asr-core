@@ -123,38 +123,69 @@ async function initAudio() {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         microphone = audioContext.createMediaStreamSource(stream);
 
-        // 創建 ScriptProcessor
-        processor = audioContext.createScriptProcessor(2048, 1, 1);
+        // 使用 AudioWorkletNode 替代 ScriptProcessorNode
+        try {
+            // 先載入 worklet module
+            await audioContext.audioWorklet.addModule('worklets/audio-processor.worklet.js');
+            
+            // 創建 AudioWorkletNode
+            processor = new AudioWorkletNode(audioContext, 'audio-processor');
+            
+            // 配置處理器
+            processor.port.postMessage({
+                type: 'configure',
+                vadChunkSize: 512, // 32ms at 16kHz for VAD
+                wakewordChunkSize: 1280 // 80ms at 16kHz for WakeWord
+            });
+            
+            // 處理來自 worklet 的訊息
+            processor.port.onmessage = (event) => {
+                if (event.data.type === 'vad') {
+                    processVadChunk(event.data.data);
+                } else if (event.data.type === 'wakeword') {
+                    processWakewordChunk(event.data.data);
+                }
+            };
+            
+            console.log('✅ 使用 AudioWorkletNode (現代 API)');
+        } catch (error) {
+            console.warn('AudioWorkletNode 不支援，降級使用 ScriptProcessorNode:', error);
+            
+            // 降級方案：繼續使用 ScriptProcessorNode
+            processor = audioContext.createScriptProcessor(2048, 1, 1);
 
-        let vadBuffer = [];
-        let wakewordBuffer = [];
-        const vadChunkSize = 512; // 32ms at 16kHz for VAD
-        const wakewordChunkSize = 1280; // 80ms at 16kHz for WakeWord
+            let vadBuffer = [];
+            let wakewordBuffer = [];
+            const vadChunkSize = 512; // 32ms at 16kHz for VAD
+            const wakewordChunkSize = 1280; // 80ms at 16kHz for WakeWord
 
-        processor.onaudioprocess = (e) => {
-            const inputData = e.inputBuffer.getChannelData(0);
-            const resampled = resampleTo16kHz(inputData, audioContext.sampleRate);
+            processor.onaudioprocess = (e) => {
+                const inputData = e.inputBuffer.getChannelData(0);
+                const resampled = resampleTo16kHz(inputData, audioContext.sampleRate);
 
-            // 累積音訊數據到兩個 buffer
-            for (let i = 0; i < resampled.length; i++) {
-                vadBuffer.push(resampled[i]);
-                wakewordBuffer.push(resampled[i]);
-            }
+                // 累積音訊數據到兩個 buffer
+                for (let i = 0; i < resampled.length; i++) {
+                    vadBuffer.push(resampled[i]);
+                    wakewordBuffer.push(resampled[i]);
+                }
 
-            // 處理 VAD (需要 512 個樣本)
-            while (vadBuffer.length >= vadChunkSize) {
-                const vadChunk = new Float32Array(vadBuffer.slice(0, vadChunkSize));
-                vadBuffer = vadBuffer.slice(vadChunkSize);
-                processVadChunk(vadChunk);
-            }
+                // 處理 VAD (需要 512 個樣本)
+                while (vadBuffer.length >= vadChunkSize) {
+                    const vadChunk = new Float32Array(vadBuffer.slice(0, vadChunkSize));
+                    vadBuffer = vadBuffer.slice(vadChunkSize);
+                    processVadChunk(vadChunk);
+                }
 
-            // 處理 WakeWord (需要 1280 個樣本)
-            while (wakewordBuffer.length >= wakewordChunkSize) {
-                const wakewordChunk = new Float32Array(wakewordBuffer.slice(0, wakewordChunkSize));
-                wakewordBuffer = wakewordBuffer.slice(wakewordChunkSize);
-                processWakewordChunk(wakewordChunk);
-            }
-        };
+                // 處理 WakeWord (需要 1280 個樣本)
+                while (wakewordBuffer.length >= wakewordChunkSize) {
+                    const wakewordChunk = new Float32Array(wakewordBuffer.slice(0, wakewordChunkSize));
+                    wakewordBuffer = wakewordBuffer.slice(wakewordChunkSize);
+                    processWakewordChunk(wakewordChunk);
+                }
+            };
+            
+            console.log('⚠️ 使用 ScriptProcessorNode (已棄用但仍可運作)');
+        }
 
         return true;
     } catch (error) {

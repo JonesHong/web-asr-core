@@ -90,6 +90,9 @@ export async function loadWhisperResources(
       modelId,
       {
         quantized: opts?.quantized ?? cfg.whisper.quantized,
+        // WebGPU 加速設定
+        device: opts?.device ?? cfg.whisper.device,
+        dtype: opts?.dtype ?? cfg.whisper.dtype,
         // 如果指定了本地路徑，強制僅使用本地檔案
         ...(localBasePath && { 
           local_files_only: true,

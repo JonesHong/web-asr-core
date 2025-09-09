@@ -70,4 +70,8 @@ export interface WhisperLoadOptions {
   localBasePath?: string;
   /** ONNX runtime 的 WASM 檔案路徑 */
   wasmPaths?: string;
+  /** 執行裝置：'webgpu' 使用 GPU、'wasm' 使用 CPU、'auto' 自動選擇 */
+  device?: 'webgpu' | 'wasm' | 'auto';
+  /** 資料類型：'fp32' 全精度、'fp16' 半精度、'q8' 8位量化、'q4' 4位量化 */
+  dtype?: 'fp32' | 'fp16' | 'q8' | 'q4';
 }

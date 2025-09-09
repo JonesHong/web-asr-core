@@ -12,6 +12,7 @@ import type { InferenceSession, Tensor } from 'onnxruntime-web';
 import { createSessions, createTensor } from '../runtime/ort';
 import type { WakewordResources, WakewordState, WakewordParams, WakewordResult } from '../types';
 import { ConfigManager } from '../utils/config-manager';
+import { ortService } from './ort';
 
 /**
  * 載入所有喚醒詞模型資源
@@ -50,7 +51,10 @@ export async function loadWakewordResources(
     embeddingUrl: string;
   }
 ): Promise<WakewordResources> {
-  const cfg = config || new ConfigManager();
+  const cfg = config || ConfigManager.getInstance();
+  
+  // 初始化 ORT 服務
+  await ortService.initialize();
   
   // 使用自訂路徑或從配置取得
   const paths = customPaths || {
@@ -59,12 +63,23 @@ export async function loadWakewordResources(
     embeddingUrl: cfg.wakeword[wakewordName].embeddingPath,
   };
   
-  // 並行載入三個模型以提高效率
-  const [detector, melspec, embedding] = await createSessions([
-    paths.detectorUrl,
-    paths.melspecUrl,
-    paths.embeddingUrl,
-  ]);
+  // 如果啟用 Web Worker，預載入模型
+  if (cfg.onnx.useWebWorker) {
+    await Promise.all([
+      ortService.preloadModelInWorker(`wakeword_detector_${wakewordName}`, paths.detectorUrl),
+      ortService.preloadModelInWorker(`wakeword_melspec_${wakewordName}`, paths.melspecUrl),
+      ortService.preloadModelInWorker(`wakeword_embedding_${wakewordName}`, paths.embeddingUrl),
+    ]);
+  }
+  
+  // 使用優化的 ORT 服務並行載入三個模型
+  const sessionPromises = [
+    ortService.createSession(paths.detectorUrl),
+    ortService.createSession(paths.melspecUrl),
+    ortService.createSession(paths.embeddingUrl),
+  ];
+  
+  const [detector, melspec, embedding] = await Promise.all(sessionPromises);
   
   // 建立初始資源物件，使用配置的維度
   const resources: WakewordResources = { 

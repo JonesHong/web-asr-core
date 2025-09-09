@@ -32,6 +32,27 @@
  */
 export class ConfigManager {
   /**
+   * 單例實例（如需全域共用，請使用 ConfigManager.getInstance()）
+   *
+   * 使用 null 初始值以清楚表示尚未建立實例
+   */
+  private static _instance: ConfigManager | null = null;
+
+  /**
+   * 取得或建立單例配置管理器
+   * @param overrides - 選擇性的覆蓋配置（只在首次建立時應用，或傳入時會合併到現有實例）
+   */
+  public static getInstance(overrides?: Partial<ConfigManager>): ConfigManager {
+    if (!ConfigManager._instance) {
+      ConfigManager._instance = new ConfigManager(overrides);
+    } else if (overrides) {
+      // 若已存在實例且提供 overrides，合併覆蓋到現有單例
+      ConfigManager._instance.applyOverrides(overrides);
+    }
+    return ConfigManager._instance;
+  }
+
+  /**
    * VAD（語音活動檢測）配置
    * 
    * @description Silero VAD v6 模型的配置參數
@@ -260,6 +281,27 @@ export class ConfigManager {
     quantized: true,
     
     /**
+     * 執行裝置
+     * @description 選擇模型執行的裝置
+     * @default 'auto'
+     * @options 'webgpu' - 使用 GPU 加速（需要瀏覽器支援 WebGPU）
+     * @options 'wasm' - 使用 CPU（通過 WebAssembly）
+     * @options 'auto' - 自動選擇最佳可用裝置
+     */
+    device: 'auto' as 'webgpu' | 'wasm' | 'auto',
+    
+    /**
+     * 資料類型（量化程度）
+     * @description 控制模型精度和大小的權衡
+     * @default 'q8'
+     * @options 'fp32' - 32位浮點數（最高精度，WebGPU 預設）
+     * @options 'fp16' - 16位浮點數（中等精度）
+     * @options 'q8' - 8位量化（平衡精度和大小，WASM 預設）
+     * @options 'q4' - 4位量化（最小檔案大小）
+     */
+    dtype: 'q8' as 'fp32' | 'fp16' | 'q8' | 'q4',
+    
+    /**
      * 預設語言代碼
      * @description ISO 639-1 語言代碼，如 'en', 'zh', 'ja'
      * @default 'zh'
@@ -311,6 +353,124 @@ export class ConfigManager {
        * @default 5
        */
       overlapSeconds: 5,
+    },
+  };
+
+  /**
+   * ONNX Runtime 配置
+   * 
+   * @description ONNX Runtime Web 的執行配置
+   */
+  public onnx = {
+    /**
+     * 執行提供者優先順序
+     * @description 按優先順序嘗試的執行提供者
+     * @default ['webgpu', 'wasm']
+     */
+    executionProviders: ['webgpu', 'wasm'] as Array<'webgpu' | 'wasm' | 'webgl' | 'cpu'>,
+    
+    /**
+     * 是否使用 Web Worker
+     * @description 在 Web Worker 中執行模型推論以避免阻塞主執行緒
+     * @default true
+     */
+    useWebWorker: true,
+    
+    /**
+     * WebGPU 配置
+     */
+    webgpu: {
+      /**
+       * 是否啟用 WebGPU
+       * @description 當瀏覽器支援時使用 GPU 加速
+       * @default true
+       */
+      enabled: true,
+      
+      /**
+       * 裝置偏好
+       * @description 'high-performance' 或 'low-power'
+       * @default 'high-performance'
+       */
+      powerPreference: 'high-performance' as 'high-performance' | 'low-power',
+      
+      /**
+       * 強制使用回退
+       * @description 當 WebGPU 不可用時是否強制使用 WASM
+       * @default true
+       */
+      forceFallback: true,
+    },
+    
+    /**
+     * WASM 配置
+     */
+    wasm: {
+      /**
+       * SIMD 支援
+       * @description 使用 SIMD 指令集加速（如果支援）
+       * @default true
+       */
+      simd: true,
+      
+      /**
+       * 執行緒數
+       * @description Web Worker 執行緒數（0 = 自動）
+       * @default 0
+       */
+      numThreads: 0,
+      
+      /**
+       * WASM 檔案路徑
+       * @description 自訂 WASM 檔案位置
+       * @default undefined
+       */
+      wasmPaths: undefined as string | undefined,
+    },
+    
+    /**
+     * 圖優化選項
+     */
+    graphOptimization: {
+      /**
+       * 優化等級
+       * @description 'disabled' | 'basic' | 'extended' | 'all'
+       * @default 'all'
+       */
+      level: 'all' as 'disabled' | 'basic' | 'extended' | 'all',
+      
+      /**
+       * 是否啟用記憶體模式優化
+       * @description 減少記憶體使用但可能影響速度
+       * @default false
+       */
+      enableMemPattern: false,
+      
+      /**
+       * 是否啟用 CPU 記憶體區域
+       * @description 在 CPU 和 GPU 之間共享記憶體
+       * @default false
+       */
+      enableCpuMemArena: false,
+    },
+    
+    /**
+     * 模型快取配置
+     */
+    modelCache: {
+      /**
+       * 是否啟用模型快取
+       * @description 快取已載入的模型以加快後續載入
+       * @default true
+       */
+      enabled: true,
+      
+      /**
+       * 快取大小限制（MB）
+       * @description 最大快取大小
+       * @default 100
+       */
+      maxSize: 100,
     },
   };
 
@@ -529,4 +689,4 @@ export class ConfigManager {
  * const threshold = defaultConfig.vad.threshold;
  * ```
  */
-export const defaultConfig = new ConfigManager();
+export const defaultConfig = ConfigManager.getInstance();

@@ -8,6 +8,7 @@ ehthumbs.db
 Thumbs.db
 
 node_modules/
+dist/
 
 # IDE files
 .vscode/
@@ -47,8 +48,14 @@ temp/
 
 # Browser cache and storage
 .cache/
-dist/
+
+# Build output (keep dist for npm package)
+# dist/
 build/
+
+# Test files
+test-*.html
+!test-audio-health.html  # Keep the important diagnostic tool
 
 # Backup files
 *.backup

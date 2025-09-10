@@ -35,6 +35,12 @@ export {
   createTensor,
 } from './runtime/ort';
 
+// 匯出 ORT 優化服務
+export {
+  ORTService,
+  ortService,
+} from './services/ort';
+
 // 匯出 VAD 服務
 export {
   loadVadSession,
@@ -68,6 +74,13 @@ export {
   ConfigManager,
   defaultConfig,
 } from './utils/config-manager';
+
+// 匯出系統診斷工具
+export {
+  SystemDiagnostics,
+  systemDiagnostics,
+  type SystemDiagnosis,
+} from './utils/system-diagnostics';
 
 // 為方便起見重新匯出 onnxruntime-web 類型
 export type { InferenceSession, Tensor } from 'onnxruntime-web';

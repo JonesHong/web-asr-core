@@ -6,7 +6,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node fix-imports.js",
+    "build:raw": "tsc",
+    "fix-imports": "node fix-imports.js",
     "bundle": "node build.js",
     "build:all": "npm run build && npm run bundle",
     "dev": "tsc --watch",

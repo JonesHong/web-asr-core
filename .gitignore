@@ -83,7 +83,8 @@ models/**/*.txt
 !models/github/dscripka/openWakeWord/melspectrogram.onnx
 !models/github/snakers4/
 !models/github/snakers4/silero-vad/
-!models/github/snakers4/silero-vad/silero_vad.onnx
+!models/github/snakers4/silero-vad/silero_vad_v4.onnx
+!models/github/snakers4/silero-vad/silero_vad_v6.onnx
 # Keep whisper-tiny quantized models for GitHub Pages demo
 !models/huggingface/
 !models/huggingface/Xenova/

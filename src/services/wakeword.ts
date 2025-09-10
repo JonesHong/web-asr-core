@@ -63,20 +63,20 @@ export async function loadWakewordResources(
     embeddingUrl: cfg.wakeword[wakewordName].embeddingPath,
   };
   
-  // 如果啟用 Web Worker，預載入模型
+  // 如果啟用 Web Worker，預載入模型，指定為 wakeword 類型以使用 WASM
   if (cfg.onnx.useWebWorker) {
     await Promise.all([
-      ortService.preloadModelInWorker(`wakeword_detector_${wakewordName}`, paths.detectorUrl),
-      ortService.preloadModelInWorker(`wakeword_melspec_${wakewordName}`, paths.melspecUrl),
-      ortService.preloadModelInWorker(`wakeword_embedding_${wakewordName}`, paths.embeddingUrl),
+      ortService.preloadModelInWorker(`wakeword_detector_${wakewordName}`, paths.detectorUrl, 'wakeword'),
+      ortService.preloadModelInWorker(`wakeword_melspec_${wakewordName}`, paths.melspecUrl, 'wakeword'),
+      ortService.preloadModelInWorker(`wakeword_embedding_${wakewordName}`, paths.embeddingUrl, 'wakeword'),
     ]);
   }
   
-  // 使用優化的 ORT 服務並行載入三個模型
+  // 使用優化的 ORT 服務並行載入三個模型，指定為 wakeword 類型以使用 WASM
   const sessionPromises = [
-    ortService.createSession(paths.detectorUrl),
-    ortService.createSession(paths.melspecUrl),
-    ortService.createSession(paths.embeddingUrl),
+    ortService.createSession(paths.detectorUrl, undefined, 'wakeword'),
+    ortService.createSession(paths.melspecUrl, undefined, 'wakeword'),
+    ortService.createSession(paths.embeddingUrl, undefined, 'wakeword'),
   ];
   
   const [detector, melspec, embedding] = await Promise.all(sessionPromises);
@@ -282,12 +282,21 @@ export async function processWakewordChunk(
     
     score = (detOut[resources.detector.outputNames[0]] as Tensor).data[0] as number;
     
+    // 調試輸出
+    if (score > 0.05 || Math.random() < 0.01) {  // 偶爾輸出或當分數較高時
+      console.log(`[Wakeword] Detection score: ${score.toFixed(4)}, threshold: ${params.threshold}`);
+    }
+    
     // 按步長滑動梅爾緩衝區
     melBuffer.splice(0, melStride);
   }
   
   // 檢查是否觸發喚醒詞
   const triggered = score > params.threshold;
+  
+  if (triggered) {
+    console.log(`[Wakeword] TRIGGERED! Score: ${score.toFixed(4)} > ${params.threshold}`);
+  }
   
   // 返回檢測結果與更新的狀態
   const state: WakewordState = { 

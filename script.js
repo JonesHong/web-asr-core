@@ -465,28 +465,28 @@ document.getElementById('initBtn').addEventListener('click', async () => {
     status.textContent = '正在載入模型...';
 
     try {
-        // 硬編碼模型路徑配置
+        // 硬編碼模型路徑配置 - 使用從根目錄開始的路徑
         const MODEL_PATHS = {
             vad: {
-                modelUrl: '../models/github/snakers4/silero-vad/silero_vad_v6.onnx'
+                modelUrl: '/models/github/snakers4/silero-vad/silero_vad_v6.onnx'
             },
             wakeword: {
                 'hey-jarvis': {
-                    detectorUrl: '../models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
-                    melspecUrl: '../models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: '../models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: '/models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
+                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 },
                 'hey-mycroft': {
-                    detectorUrl: '../models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
-                    melspecUrl: '../models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: '../models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: '/models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
+                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 },
                 'alexa': {
-                    detectorUrl: '../models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
-                    melspecUrl: '../models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: '../models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: '/models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
+                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 }
             },
@@ -528,7 +528,7 @@ document.getElementById('initBtn').addEventListener('click', async () => {
         if (window.transformers) {
             const { env } = window.transformers;
             // 設定本地模型路徑 - 重要：這裡設定基礎路徑
-            env.localModelPath = '../models/huggingface/';
+            env.localModelPath = '/models/huggingface/';
             env.allowLocalModels = true;
             env.allowRemoteModels = false;
             // 設定 WASM 路徑
@@ -544,7 +544,7 @@ document.getElementById('initBtn').addEventListener('click', async () => {
             MODEL_PATHS.whisper.path,  // 'Xenova/whisper-base'
             { 
                 quantized: MODEL_PATHS.whisper.quantized,
-                localBasePath: '../models/huggingface/'  // 本地模型基礎路徑
+                localBasePath: '/models/huggingface/'  // 本地模型基礎路徑
             }
         );
         log('whisperLog', 'Whisper 模型載入成功', 'success');
@@ -686,19 +686,19 @@ document.getElementById('wakewordSelect').addEventListener('change', async (e) =
         // 使用硬編碼的模型路徑
         const MODEL_PATHS = {
             'hey-jarvis': {
-                detectorUrl: '../models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
-                melspecUrl: '../models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                embeddingUrl: '../models/github/dscripka/openWakeWord/embedding_model.onnx'
+                detectorUrl: '/models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
+                melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx'
             },
             'hey-mycroft': {
-                detectorUrl: '../models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
-                melspecUrl: '../models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                embeddingUrl: '../models/github/dscripka/openWakeWord/embedding_model.onnx'
+                detectorUrl: '/models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
+                melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx'
             },
             'alexa': {
-                detectorUrl: '../models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
-                melspecUrl: '../models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                embeddingUrl: '../models/github/dscripka/openWakeWord/embedding_model.onnx'
+                detectorUrl: '/models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
+                melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx'
             }
         };
 
@@ -830,7 +830,152 @@ document.getElementById('whisperTranscribeBtn').addEventListener('click', async 
     }
 });
 
+// 分頁切換功能
+function initTabSystem() {
+    const tabButtons = document.querySelectorAll('.tab-button');
+    const tabContents = document.querySelectorAll('.tab-content');
+    
+    tabButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            const targetTab = button.getAttribute('data-tab');
+            
+            // 更新按鈕狀態
+            tabButtons.forEach(btn => {
+                btn.classList.remove('active', 'text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+                btn.classList.add('text-gray-600');
+            });
+            
+            button.classList.add('active', 'text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+            button.classList.remove('text-gray-600');
+            
+            // 切換內容顯示
+            tabContents.forEach(content => {
+                if (content.id === `tab-${targetTab}`) {
+                    content.classList.remove('hidden');
+                    content.classList.add('flex');
+                } else {
+                    content.classList.add('hidden');
+                    content.classList.remove('flex');
+                }
+            });
+            
+            // 記錄切換
+            console.log(`切換到 ${targetTab} 分頁`);
+        });
+    });
+}
+
+// 初始化分頁系統
+initTabSystem();
+
 // 初始化日誌
 log('vadLog', 'VAD 服務就緒', 'info');
+
+// 系統診斷按鈕事件
+document.getElementById('diagnosticBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('diagnosticBtn');
+    const resultDiv = document.getElementById('diagnosticResult');
+    
+    btn.disabled = true;
+    resultDiv.innerHTML = '<div class="text-gray-200 text-base font-medium">正在執行診斷...</div>';
+    
+    try {
+        // 動態導入系統診斷工具
+        const { SystemDiagnostics } = await import('./dist/utils/system-diagnostics.js');
+        const diagnostics = SystemDiagnostics.getInstance();
+        const report = await diagnostics.diagnose();
+        
+        // 格式化診斷結果為 HTML - 使用適應性佈局
+        let html = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-2">';
+        
+        // 左側欄
+        html += '<div class="space-y-2">';
+        
+        // 音訊功能
+        html += '<div class="bg-gray-800/50 rounded-lg p-2">';
+        html += '<h3 class="text-white font-bold text-base mb-1">🎵 音訊功能</h3>';
+        html += `<div class="text-gray-200 text-sm ml-1">安全上下文: ${report.supported.secureContext ? '✅ 是' : '❌ 否'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">getUserMedia: ${report.supported.getUserMedia ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">AudioWorklet: ${report.supported.audioWorklet ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">MediaRecorder: ${report.supported.mediaRecorder ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">Web Speech API: ${report.supported.webSpeechRecognition ? '✅ 支援' : '❌ 不支援'}</div>`;
+        if (report.supported.webSpeechOffline) {
+            html += `<div class="text-gray-200 text-sm ml-4">離線模式: ✅ 支援</div>`;
+        }
+        html += '</div>';
+        
+        // 運算功能
+        html += '<div class="bg-gray-800/50 rounded-lg p-2">';
+        html += '<h3 class="text-white font-bold text-base mb-1">⚙️ 運算功能</h3>';
+        html += `<div class="text-gray-200 text-sm ml-1">WebGPU: ${report.supported.webgpu ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">WebGL 2.0: ${report.supported.webgl ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">WebNN: ${report.supported.webnn ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">WASM SIMD: ${report.supported.wasmSIMD ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">WASM Threads: ${report.supported.wasmThreads ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">SharedArrayBuffer: ${report.supported.sharedArrayBuffer ? '✅ 支援' : '❌ 不支援'}</div>`;
+        html += '</div>';
+        
+        // 模型狀態
+        html += '<div class="bg-gray-800/50 rounded-lg p-3">';
+        html += '<h3 class="text-white font-bold text-lg mb-2">📦 模型狀態</h3>';
+        html += `<div class="text-gray-200 text-sm ml-1">VAD: ${vadSession ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">喚醒詞: ${wakewordResources ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">Whisper: ${whisperResources ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
+        html += '</div>';
+        
+        html += '</div>'; // 結束左側欄
+        
+        // 右側欄
+        html += '<div class="space-y-2">';
+        
+        // 效能指標
+        html += '<div class="bg-gray-800/50 rounded-lg p-2">';
+        html += '<h3 class="text-white font-bold text-base mb-1">📊 效能指標</h3>';
+        html += `<div class="text-gray-200 text-sm ml-1">GPU 名稱: <span class="text-cyan-400">${report.performance.gpuName || 'N/A'}</span></div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">CPU 核心數: <span class="text-cyan-400">${report.performance.cpuCores}</span></div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">記憶體: <span class="text-cyan-400">${report.performance.memory ? `${(report.performance.memory / 1024 / 1024 / 1024).toFixed(1)} GB` : 'N/A'}</span></div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">裝置類型: <span class="text-cyan-400">${report.performance.deviceType}</span></div>`;
+        html += '</div>';
+        
+        // 建議配置
+        html += '<div class="bg-gray-800/50 rounded-lg p-2">';
+        html += '<h3 class="text-white font-bold text-base mb-1">💡 建議配置</h3>';
+        html += `<div class="text-gray-200 text-sm ml-1">執行提供者: <span class="text-green-400 font-semibold">${report.recommendation.executionProvider.join(' > ')}</span></div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">Whisper 後端: <span class="text-green-400 font-semibold">${report.recommendation.whisperBackend}</span></div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">資料傳輸: <span class="text-green-400 font-semibold">${report.recommendation.transport === 'sab' ? 'SharedArrayBuffer' : 'MessagePort'}</span></div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">模型大小: <span class="text-green-400 font-semibold">${report.recommendation.modelSize}</span></div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">音訊塊: <span class="text-green-400 font-semibold">${report.recommendation.audioConfig.chunkMs}ms</span></div>`;
+        html += '</div>';
+        
+        // 警告和提示
+        if (report.recommendation.warnings && report.recommendation.warnings.length > 0) {
+            html += '<div class="bg-yellow-900/30 border border-yellow-600/50 rounded-lg p-2">';
+            html += '<h3 class="text-yellow-400 font-bold text-base mb-1">⚠️ 警告</h3>';
+            report.recommendation.warnings.forEach(warning => {
+                html += `<div class="text-yellow-300 ml-2 text-sm">• ${warning}</div>`;
+            });
+            html += '</div>';
+        }
+        
+        if (report.recommendation.notes && report.recommendation.notes.length > 0) {
+            html += '<div class="bg-blue-900/30 border border-blue-600/50 rounded-lg p-2">';
+            html += '<h3 class="text-blue-400 font-bold text-base mb-1">ℹ️ 提示</h3>';
+            report.recommendation.notes.forEach(note => {
+                html += `<div class="text-blue-300 ml-2 text-sm">• ${note}</div>`;
+            });
+            html += '</div>';
+        }
+        
+        html += '</div>'; // 結束右側欄
+        
+        html += '</div>'; // 結束網格佈局
+        
+        resultDiv.innerHTML = html;
+    } catch (error) {
+        resultDiv.innerHTML = `<div class="text-red-400 text-base font-medium">診斷失敗: ${error.message}</div>`;
+    } finally {
+        btn.disabled = false;
+    }
+});
 log('wakewordLog', '喚醒詞服務就緒', 'info');
 log('whisperLog', 'Whisper 服務就緒', 'info');

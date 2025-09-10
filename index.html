@@ -5,13 +5,23 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WebASRCore - 語音服務測試</title>
-    <link rel="icon" href="favicon.ico" type="image/x-icon">
+    <!-- <link rel="icon" href="favicon.ico" type="image/x-icon"> -->
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
 
     <!-- Tailwind CSS 配置 -->
     <script>
+        // 抑制 Tailwind CDN 生產環境警告（開發環境使用）
+        if (window.tailwind) {
+            tailwind.config = {
+                // 停用生產環境警告
+                future: {
+                    hoverOnlyWhenSupported: true,
+                },
+            }
+        }
+        
         tailwind.config = {
             darkMode: 'class',
             theme: {
@@ -46,6 +56,83 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <!-- 自定義樣式 -->
     <link rel="stylesheet" href="style.css">
+    
+    <!-- 分頁系統樣式 -->
+    <style>
+        .tab-button {
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        
+        .tab-button.active {
+            color: #4f46e5;
+            background-color: #eef2ff;
+            border-bottom: 2px solid #4f46e5;
+        }
+        
+        .tab-button:not(.active):hover {
+            background-color: #f9fafb;
+        }
+        
+        .tab-content {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+        
+        .tab-content.hidden {
+            display: none !important;
+        }
+        
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        /* 診斷區塊特殊捲動條 */
+        .diagnostic-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(34, 211, 238, 0.3) rgba(6, 182, 212, 0.1);
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar-track {
+            background: rgba(6, 182, 212, 0.1);
+            border-radius: 3px;
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar-thumb {
+            background-color: rgba(34, 211, 238, 0.5);
+            border-radius: 3px;
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(34, 211, 238, 0.7);
+        }
+        
+        /* 一般捲動條 */
+        .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: rgba(156, 163, 175, 0.5);
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(156, 163, 175, 0.7);
+        }
+    </style>
 </head>
 
 <body class="h-screen bg-gradient-to-br from-purple-500 via-indigo-600 to-blue-700 overflow-hidden">
@@ -58,159 +145,205 @@
             </h1>
         </div>
 
-        <!-- 初始化區域 - 固定高度 -->
-        <div class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-4 mb-4 flex-shrink-0 shadow-2xl">
-            <div class="flex flex-col sm:flex-row items-center justify-between gap-3">
-                <div class="flex items-center gap-3 text-white">
-                    <i class="fas fa-box text-2xl"></i>
-                    <h2 class="text-xl font-semibold">模型初始化</h2>
-                </div>
-                <button id="initBtn" class="px-6 py-2 bg-white text-indigo-600 font-semibold rounded-lg 
-                               hover:bg-gray-100 transition-all duration-200 transform hover:scale-105
-                               disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
-                    <i class="fas fa-download mr-2"></i>載入所有模型
-                </button>
-            </div>
-            <div id="initStatus" class="mt-3 p-3 bg-white/20 backdrop-blur-sm rounded-lg text-white font-medium">
-                點擊載入模型以開始測試
-            </div>
-            <div id="initLoading" class="hidden mt-3">
-                <div class="flex items-center gap-3 text-white">
-                    <div class="w-8 h-8 border-3 border-white/30 border-t-white rounded-full animate-spin"></div>
-                    <span>正在載入模型...</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- 服務測試區域 - 使用剩餘空間 -->
-        <div class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4 min-h-0">
-            <!-- VAD 服務 -->
-            <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl p-4 flex flex-col min-h-0 border-t-4 border-indigo-500">
-                <!-- 標題區域 -->
-                <div class="flex items-center justify-between mb-3 flex-shrink-0">
-                    <h2 class="text-lg font-bold text-indigo-700 flex items-center gap-2">
-                        <i class="fas fa-wave-square text-xl"></i>
-                        VAD 檢測
-                    </h2>
+        <!-- 主要內容區域 - 兩欄佈局 -->
+        <div class="flex-1 flex flex-col lg:flex-row gap-4 min-h-0 items-stretch">
+            <!-- 左側：模型初始化與系統診斷 (40%) -->
+            <div class="lg:w-2/5 flex flex-col gap-4 min-h-0 min-w-0">
+                <!-- 模型初始化區塊 -->
+                <div class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-4 shadow-2xl">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-3 text-white">
+                            <i class="fas fa-box text-xl"></i>
+                            <h2 class="text-lg font-semibold">模型初始化</h2>
+                        </div>
+                        <button id="initBtn" class="px-4 py-1.5 bg-white text-indigo-600 text-sm font-semibold rounded-lg 
+                                       hover:bg-gray-100 transition-all duration-200 transform hover:scale-105
+                                       disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
+                            <i class="fas fa-download mr-1"></i>載入
+                        </button>
+                    </div>
+                    <div id="initStatus" class="p-2 bg-white/20 backdrop-blur-sm rounded-lg text-white text-sm">
+                        點擊載入模型以開始測試
+                    </div>
+                    <div id="initLoading" class="hidden mt-2">
+                        <div class="flex items-center gap-2 text-white text-sm">
+                            <div class="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            <span>正在載入模型...</span>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- 控制區域 - 統一高度 -->
-                <div class="flex gap-2 mb-3 flex-shrink-0 h-9">
-                    <button id="vadStartBtn"
-                        class="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-lg font-medium
-                                   hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-play mr-1"></i>開始
+                <!-- 系統診斷區塊 -->
+                <div class="bg-gradient-to-r from-teal-500 to-cyan-600 rounded-xl p-3 shadow-2xl flex-1 flex flex-col min-h-0">
+                    <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                        <div class="flex items-center gap-3 text-white">
+                            <i class="fas fa-stethoscope text-xl"></i>
+                            <h2 class="text-lg font-semibold">系統診斷</h2>
+                        </div>
+                        <button id="diagnosticBtn" class="px-4 py-1.5 bg-white text-teal-600 text-sm font-semibold rounded-lg 
+                                       hover:bg-gray-100 transition-all duration-200 transform hover:scale-105">
+                            <i class="fas fa-heartbeat mr-1"></i>診斷
+                        </button>
+                    </div>
+                    <div id="diagnosticResult" class="bg-gray-900/90 backdrop-blur-sm rounded-lg p-2 flex-1 min-h-0 overflow-y-auto overflow-x-hidden diagnostic-scrollbar">
+                        <div class="text-gray-300 text-base">
+                            點擊診斷按鈕檢查系統狀態...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右側：語音服務測試 (60%) - 分頁式設計 -->
+            <div class="lg:w-3/5 min-h-0 min-w-0 flex">
+                <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl flex-1 flex flex-col min-h-0">
+                <!-- 分頁標籤 -->
+                <div class="flex border-b border-gray-200">
+                    <button class="tab-button active px-6 py-3 font-semibold text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50 transition-all" data-tab="vad">
+                        <i class="fas fa-wave-square mr-2"></i>VAD 檢測
                     </button>
-                    <button id="vadStopBtn"
-                        class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg font-medium
-                                   hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-stop mr-1"></i>停止
+                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="wakeword">
+                        <i class="fas fa-bell mr-2"></i>喚醒詞
                     </button>
-                    <!-- 空白區域保持對齊 -->
+                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="whisper">
+                        <i class="fas fa-closed-captioning mr-2"></i>Whisper
+                    </button>
+                    <!-- 預留空間給新的檢測項目 -->
                     <div class="flex-1"></div>
+                    <button class="px-4 py-2 text-gray-400 hover:text-gray-600 transition-all" title="更多檢測項目即將推出">
+                        <i class="fas fa-plus-circle"></i>
+                    </button>
                 </div>
 
-                <canvas id="vadCanvas" class="w-full h-16 bg-gray-800 rounded-lg mb-3 flex-shrink-0"></canvas>
+                <!-- 分頁內容區域 -->
+                <div class="flex-1 p-6 min-h-0 flex flex-col">
+                    <!-- VAD 分頁內容 -->
+                    <div id="tab-vad" class="tab-content flex flex-col h-full">
+                        <!-- 控制區域 -->
+                        <div class="flex gap-3 mb-4">
+                            <button id="vadStartBtn"
+                                class="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium
+                                       hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-play mr-2"></i>開始檢測
+                            </button>
+                            <button id="vadStopBtn"
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg font-medium
+                                       hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-stop mr-2"></i>停止
+                            </button>
+                        </div>
 
-                <div id="vadStatus"
-                    class="px-3 py-2 bg-indigo-50 rounded-lg border-l-4 border-indigo-400 text-sm font-medium mb-3 text-indigo-800 flex-shrink-0">
-                    等待模型載入...
-                </div>
+                        <!-- 音訊視覺化 -->
+                        <canvas id="vadCanvas" class="w-full h-24 bg-gray-800 rounded-lg mb-4"></canvas>
 
-                <!-- log 區域使用剩餘空間並可滾動 -->
-                <div class="flex-1 bg-gray-900 rounded-lg p-3 min-h-0">
-                    <div id="vadLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-xs space-y-1">
+                        <!-- 狀態顯示 -->
+                        <div id="vadStatus"
+                            class="px-4 py-3 bg-indigo-50 rounded-lg border-l-4 border-indigo-400 font-medium mb-4 text-indigo-800">
+                            等待模型載入...
+                        </div>
+
+                        <!-- 日誌區域 -->
+                        <div class="flex-1 bg-gray-900 rounded-lg p-4 min-h-0">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-gray-400 font-semibold text-sm">檢測日誌</h3>
+                                <button onclick="document.getElementById('vadLog').innerHTML = ''" 
+                                    class="text-gray-500 hover:text-gray-300 text-xs">
+                                    <i class="fas fa-trash"></i> 清除
+                                </button>
+                            </div>
+                            <div id="vadLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-sm space-y-1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 喚醒詞分頁內容 -->
+                    <div id="tab-wakeword" class="tab-content hidden flex-col h-full">
+                        <!-- 控制區域 -->
+                        <div class="flex gap-3 mb-4">
+                            <button id="wakewordStartBtn"
+                                class="px-4 py-2 bg-purple-600 text-white rounded-lg font-medium
+                                       hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-play mr-2"></i>開始檢測
+                            </button>
+                            <button id="wakewordStopBtn"
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg font-medium
+                                       hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-stop mr-2"></i>停止
+                            </button>
+                            <select id="wakewordSelect" class="ml-auto px-4 py-2 border border-purple-300 rounded-lg font-medium
+                                       focus:outline-none focus:ring-2 focus:ring-purple-400" disabled>
+                                <option value="hey-jarvis">Hey Jarvis</option>
+                                <option value="hey-mycroft">Hey Mycroft</option>
+                                <option value="alexa">Alexa</option>
+                            </select>
+                        </div>
+
+                        <!-- 音訊視覺化 -->
+                        <canvas id="wakewordCanvas" class="w-full h-24 bg-gray-800 rounded-lg mb-4"></canvas>
+
+                        <!-- 狀態顯示 -->
+                        <div id="wakewordStatus"
+                            class="px-4 py-3 bg-purple-50 rounded-lg border-l-4 border-purple-400 font-medium mb-4 text-purple-800">
+                            等待模型載入...
+                        </div>
+
+                        <!-- 日誌區域 -->
+                        <div class="flex-1 bg-gray-900 rounded-lg p-4 min-h-0">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-gray-400 font-semibold text-sm">檢測日誌</h3>
+                                <button onclick="document.getElementById('wakewordLog').innerHTML = ''" 
+                                    class="text-gray-500 hover:text-gray-300 text-xs">
+                                    <i class="fas fa-trash"></i> 清除
+                                </button>
+                            </div>
+                            <div id="wakewordLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-sm space-y-1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Whisper 分頁內容 -->
+                    <div id="tab-whisper" class="tab-content hidden flex-col h-full">
+                        <!-- 控制區域 -->
+                        <div class="flex gap-3 mb-4">
+                            <button id="whisperRecordBtn"
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg font-medium
+                                       hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-microphone mr-2"></i>開始錄音
+                            </button>
+                            <button id="whisperStopBtn"
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg font-medium
+                                       hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>
+                                <i class="fas fa-stop mr-2"></i>停止錄音
+                            </button>
+                            <button id="whisperTranscribeBtn"
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium
+                                       hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-language mr-2"></i>轉譯成文字
+                            </button>
+                        </div>
+
+                        <!-- 音訊視覺化 -->
+                        <canvas id="whisperCanvas" class="w-full h-24 bg-gray-800 rounded-lg mb-4"></canvas>
+
+                        <!-- 狀態顯示 -->
+                        <div id="whisperStatus"
+                            class="px-4 py-3 bg-green-50 rounded-lg border-l-4 border-green-400 font-medium mb-4 text-green-800">
+                            等待模型載入...
+                        </div>
+
+                        <!-- 日誌區域 -->
+                        <div class="flex-1 bg-gray-900 rounded-lg p-4 min-h-0">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-gray-400 font-semibold text-sm">轉譯日誌</h3>
+                                <button onclick="document.getElementById('whisperLog').innerHTML = ''" 
+                                    class="text-gray-500 hover:text-gray-300 text-xs">
+                                    <i class="fas fa-trash"></i> 清除
+                                </button>
+                            </div>
+                            <div id="whisperLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-sm space-y-1">
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-
-            <!-- 喚醒詞服務 -->
-            <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl p-4 flex flex-col min-h-0 border-t-4 border-purple-500">
-                <!-- 標題區域 -->
-                <div class="flex items-center justify-between mb-3 flex-shrink-0">
-                    <h2 class="text-lg font-bold text-purple-700 flex items-center gap-2">
-                        <i class="fas fa-bell text-xl"></i>
-                        喚醒詞
-                    </h2>
-                </div>
-
-                <!-- 控制區域 - 統一高度 -->
-                <div class="flex gap-2 mb-3 flex-shrink-0 h-9">
-                    <button id="wakewordStartBtn"
-                        class="px-3 py-1.5 bg-purple-600 text-white text-sm rounded-lg font-medium
-                                   hover:bg-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-play mr-1"></i>開始
-                    </button>
-                    <button id="wakewordStopBtn"
-                        class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg font-medium
-                                   hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-stop mr-1"></i>停止
-                    </button>
-                    <!-- 下拉選單放在控制區域右側 -->
-                    <select id="wakewordSelect" class="ml-auto px-3 py-1.5 text-sm border border-purple-300 rounded-lg font-medium
-                                   focus:outline-none focus:ring-2 focus:ring-purple-400" disabled>
-                        <option value="hey-jarvis">Hey Jarvis</option>
-                        <option value="hey-mycroft">Hey Mycroft</option>
-                        <option value="alexa">Alexa</option>
-                    </select>
-                </div>
-
-                <canvas id="wakewordCanvas" class="w-full h-16 bg-gray-800 rounded-lg mb-3 flex-shrink-0"></canvas>
-
-                <div id="wakewordStatus"
-                    class="px-3 py-2 bg-purple-50 rounded-lg border-l-4 border-purple-400 text-sm font-medium mb-3 text-purple-800 flex-shrink-0">
-                    等待模型載入...
-                </div>
-
-                <!-- log 區域使用剩餘空間並可滾動 -->
-                <div class="flex-1 bg-gray-900 rounded-lg p-3 min-h-0">
-                    <div id="wakewordLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-xs space-y-1">
-                    </div>
-                </div>
-            </div>
-
-            <!-- Whisper 服務 -->
-            <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl p-4 flex flex-col min-h-0 border-t-4 border-green-500">
-                <!-- 標題區域 -->
-                <div class="flex items-center justify-between mb-3 flex-shrink-0">
-                    <h2 class="text-lg font-bold text-green-700 flex items-center gap-2">
-                        <i class="fas fa-closed-captioning text-xl"></i>
-                        Whisper
-                    </h2>
-                </div>
-
-                <!-- 控制區域 - 統一高度 -->
-                <div class="flex gap-2 mb-3 flex-shrink-0 h-9">
-                    <button id="whisperRecordBtn"
-                        class="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg font-medium
-                                   hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-microphone mr-1"></i>錄音
-                    </button>
-                    <button id="whisperStopBtn"
-                        class="px-3 py-1.5 bg-red-600 text-white text-sm rounded-lg font-medium
-                                   hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden" disabled>
-                        <i class="fas fa-stop mr-1"></i>停止
-                    </button>
-                    <button id="whisperTranscribeBtn"
-                        class="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg font-medium
-                                   hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
-                        <i class="fas fa-language mr-1"></i>轉譯
-                    </button>
-                    <!-- 空白區域保持對齊 -->
-                    <div class="flex-1"></div>
-                </div>
-
-                <canvas id="whisperCanvas" class="w-full h-16 bg-gray-800 rounded-lg mb-3 flex-shrink-0"></canvas>
-
-                <div id="whisperStatus"
-                    class="px-3 py-2 bg-green-50 rounded-lg border-l-4 border-green-400 text-sm font-medium mb-3 text-green-800 flex-shrink-0">
-                    等待模型載入...
-                </div>
-
-                <!-- log 區域使用剩餘空間並可滾動 -->
-                <div class="flex-1 bg-gray-900 rounded-lg p-3 min-h-0">
-                    <div id="whisperLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-xs space-y-1">
-                    </div>
                 </div>
             </div>
         </div>

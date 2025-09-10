@@ -131,9 +131,9 @@ export class ConfigManager {
       /**
        * 喚醒詞觸發閾值（0-1）
        * @description 高於此值觸發喚醒詞檢測
-       * @default 0.5
+       * @default 0.3
        */
-      threshold: 0.5,
+      threshold: 0.3,
       
       /**
        * 是否啟用此喚醒詞
@@ -370,6 +370,33 @@ export class ConfigManager {
     executionProviders: ['webgpu', 'wasm'] as Array<'webgpu' | 'wasm' | 'webgl' | 'cpu'>,
     
     /**
+     * 模型特定的執行提供者配置
+     * @description 為不同模型類型指定特定的執行提供者
+     */
+    modelSpecificProviders: {
+      /**
+       * 喚醒詞模型執行提供者
+       * @description 使用 WASM 以降低延遲（避免 GPU 記憶體傳輸開銷）
+       * @default ['wasm']
+       */
+      wakeword: ['wasm'] as Array<'webgpu' | 'wasm' | 'webgl' | 'cpu'>,
+      
+      /**
+       * VAD 模型執行提供者
+       * @description 優先使用 WebGPU 以提高吞吐量
+       * @default ['webgpu', 'wasm']
+       */
+      vad: ['webgpu', 'wasm'] as Array<'webgpu' | 'wasm' | 'webgl' | 'cpu'>,
+      
+      /**
+       * Whisper 模型執行提供者
+       * @description 優先使用 WebGPU 以提高處理速度
+       * @default ['webgpu', 'wasm']
+       */
+      whisper: ['webgpu', 'wasm'] as Array<'webgpu' | 'wasm' | 'webgl' | 'cpu'>,
+    },
+    
+    /**
      * 是否使用 Web Worker
      * @description 在 Web Worker 中執行模型推論以避免阻塞主執行緒
      * @default true
@@ -397,9 +424,9 @@ export class ConfigManager {
       /**
        * 強制使用回退
        * @description 當 WebGPU 不可用時是否強制使用 WASM
-       * @default true
+       * @default false
        */
-      forceFallback: true,
+      forceFallback: false,
     },
     
     /**

@@ -49,13 +49,13 @@ export async function loadVadSession(
   // 初始化 ORT 服務
   await ortService.initialize();
   
-  // 如果啟用 Web Worker，預載入模型
+  // 如果啟用 Web Worker，預載入模型，指定為 vad 類型以使用 WebGPU
   if (cfg.onnx.useWebWorker) {
-    await ortService.preloadModelInWorker('vad', url);
+    await ortService.preloadModelInWorker('vad', url, 'vad');
   }
   
-  // 使用優化的 ORT 服務創建會話
-  return await ortService.createSession(url, sessionOptions);
+  // 使用優化的 ORT 服務創建會話，指定為 vad 類型以使用 WebGPU
+  return await ortService.createSession(url, sessionOptions, 'vad');
 }
 
 /**
@@ -123,12 +123,26 @@ export async function processVad(
   // 如果啟用 Web Worker，使用 Worker 執行推理
   if (cfg.onnx.useWebWorker) {
     try {
+      // 準備完整的輸入數據（上下文 + 新音訊）
+      const windowSize = cfg.vad.windowSize;
+      const contextSize = cfg.vad.contextSize;
+      const effectiveWindowSize = windowSize + contextSize;
+      
+      const fullInput = new Float32Array(effectiveWindowSize);
+      fullInput.set(prevState.contextSamples, 0);  // 前 64 個上下文樣本
+      fullInput.set(audio.slice(0, windowSize), contextSize);  // 當前 512 個音訊樣本
+      
       const result = await ortService.runInferenceInWorker(
         'vad',
         'vad',
         cfg.vad.modelPath,
-        audio
+        fullInput
       );
+      
+      // 檢查 Worker 是否返回有效結果
+      if (!result || !result.result || result.error) {
+        throw new Error(`Worker inference failed: ${result?.error || 'Invalid result'}`);
+      }
       
       // 更新狀態
       const newContextSamples = new Float32Array(cfg.vad.contextSize);

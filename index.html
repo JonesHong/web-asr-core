@@ -207,6 +207,12 @@
                     <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="whisper">
                         <i class="fas fa-closed-captioning mr-2"></i>Whisper
                     </button>
+                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="buffer">
+                        <i class="fas fa-tools mr-2"></i>音訊工具
+                    </button>
+                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="timer">
+                        <i class="fas fa-stopwatch mr-2"></i>倒數計時
+                    </button>
                     <!-- 預留空間給新的檢測項目 -->
                     <div class="flex-1"></div>
                     <button class="px-4 py-2 text-gray-400 hover:text-gray-600 transition-all" title="更多檢測項目即將推出">
@@ -340,6 +346,317 @@
                                 </button>
                             </div>
                             <div id="whisperLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-sm space-y-1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 音訊工具分頁內容 -->
+                    <div id="tab-buffer" class="tab-content hidden flex-col h-full">
+                        <!-- 控制區域 - 第一排 -->
+                        <div class="flex gap-3 mb-3">
+                            <button id="bufferStartBtn"
+                                class="px-4 py-2 bg-cyan-600 text-white rounded-lg font-medium
+                                       hover:bg-cyan-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-play mr-2"></i>開始測試
+                            </button>
+                            <button id="bufferStopBtn"
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg font-medium
+                                       hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-stop mr-2"></i>停止
+                            </button>
+                            <button id="bufferClearBtn"
+                                class="px-4 py-2 bg-gray-600 text-white rounded-lg font-medium
+                                       hover:bg-gray-700 transition-colors">
+                                <i class="fas fa-broom mr-2"></i>清空
+                            </button>
+                            
+                            <!-- Buffer 容量設定 -->
+                            <div class="flex gap-2 items-center">
+                                <label class="text-gray-600 text-sm font-medium">容量:</label>
+                                <input id="bufferSizeInput" 
+                                    type="number" 
+                                    placeholder="容量" 
+                                    value="32000"
+                                    min="1000"
+                                    max="160000"
+                                    class="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm
+                                           focus:outline-none focus:ring-2 focus:ring-cyan-400">
+                                <button id="resizeBufferBtn"
+                                    class="px-3 py-1.5 bg-purple-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-purple-700 transition-colors">
+                                    <i class="fas fa-resize mr-1"></i>調整
+                                </button>
+                            </div>
+                            
+                            <!-- 設定選項 -->
+                            <div class="ml-auto flex gap-2 items-center">
+                                <label class="text-gray-600 text-sm font-medium">Chunk Size:</label>
+                                <select id="chunkSizeSelect" class="px-3 py-1.5 border border-cyan-300 rounded-lg text-sm
+                                           focus:outline-none focus:ring-2 focus:ring-cyan-400">
+                                    <option value="512">512 (VAD)</option>
+                                    <option value="1280">1280 (WakeWord)</option>
+                                    <option value="2048">2048 (Custom)</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- 控制區域 - 第二排 -->
+                        <div class="flex gap-3 mb-4">
+                            <!-- 手動新增樣本 -->
+                            <div class="flex gap-2 items-center">
+                                <input id="manualSamplesInput" 
+                                    type="number" 
+                                    placeholder="樣本數" 
+                                    value="1000"
+                                    min="1"
+                                    max="32000"
+                                    class="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm
+                                           focus:outline-none focus:ring-2 focus:ring-cyan-400">
+                                <button id="addSamplesBtn"
+                                    class="px-3 py-1.5 bg-orange-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-orange-700 transition-colors">
+                                    <i class="fas fa-plus mr-1"></i>新增
+                                </button>
+                                <button id="tripleWriteBtn"
+                                    class="px-3 py-1.5 bg-pink-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-pink-700 transition-colors">
+                                    <i class="fas fa-times mr-1"></i>3x寫入
+                                </button>
+                            </div>
+                            
+                            <!-- Buffer 操作 -->
+                            <div class="flex gap-2 items-center">
+                                <button id="peekBtn"
+                                    class="px-3 py-1.5 bg-blue-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-blue-700 transition-colors">
+                                    <i class="fas fa-eye mr-1"></i>查看
+                                </button>
+                                <input id="peekSizeInput" 
+                                    type="number" 
+                                    placeholder="查看數" 
+                                    value="100"
+                                    min="1"
+                                    max="1000"
+                                    class="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm
+                                           focus:outline-none focus:ring-2 focus:ring-blue-400">
+                                <button id="skipBtn"
+                                    class="px-3 py-1.5 bg-yellow-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-yellow-700 transition-colors">
+                                    <i class="fas fa-forward mr-1"></i>跳過
+                                </button>
+                                <input id="skipSizeInput" 
+                                    type="number" 
+                                    placeholder="跳過數" 
+                                    value="512"
+                                    min="1"
+                                    max="32000"
+                                    class="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm
+                                           focus:outline-none focus:ring-2 focus:ring-yellow-400">
+                            </div>
+                            
+                            <!-- 手動 Chunk -->
+                            <div class="flex gap-2 items-center ml-auto">
+                                <input id="manualChunkSizeInput" 
+                                    type="number" 
+                                    placeholder="Chunk大小" 
+                                    value="512"
+                                    min="1"
+                                    max="32000"
+                                    class="w-20 px-2 py-1.5 border border-gray-300 rounded-lg text-sm
+                                           focus:outline-none focus:ring-2 focus:ring-green-400">
+                                <button id="manualChunkBtn"
+                                    class="px-3 py-1.5 bg-green-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-green-700 transition-colors">
+                                    <i class="fas fa-cut mr-1"></i>Chunk
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- 音訊視覺化 -->
+                        <canvas id="bufferCanvas" class="w-full h-24 bg-gray-800 rounded-lg mb-4"></canvas>
+
+                        <!-- 狀態顯示 - 分為兩欄 -->
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <!-- RingBuffer 狀態 -->
+                            <div class="bg-cyan-50 rounded-lg p-3 border-l-4 border-cyan-400">
+                                <h3 class="text-cyan-800 font-semibold text-sm mb-2">
+                                    <i class="fas fa-ring mr-1"></i>RingBuffer 狀態
+                                </h3>
+                                <div id="bufferStats" class="text-cyan-700 text-xs space-y-1 font-mono">
+                                    <div>容量: <span class="font-bold">0 / 0</span></div>
+                                    <div>可用: <span class="font-bold">0</span> 樣本</div>
+                                    <div>寫入位置: <span class="font-bold">0</span></div>
+                                    <div>讀取位置: <span class="font-bold">0</span></div>
+                                </div>
+                            </div>
+                            
+                            <!-- Chunker 狀態 -->
+                            <div class="bg-teal-50 rounded-lg p-3 border-l-4 border-teal-400">
+                                <h3 class="text-teal-800 font-semibold text-sm mb-2">
+                                    <i class="fas fa-cubes mr-1"></i>Chunker 狀態
+                                </h3>
+                                <div id="chunkerStats" class="text-teal-700 text-xs space-y-1 font-mono">
+                                    <div>塊大小: <span class="font-bold">512</span></div>
+                                    <div>已處理: <span class="font-bold">0</span> 塊</div>
+                                    <div>剩餘: <span class="font-bold">0</span> 樣本</div>
+                                    <div>總處理: <span class="font-bold">0</span> 樣本</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 日誌區域 -->
+                        <div class="flex-1 bg-gray-900 rounded-lg p-4 min-h-0">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-gray-400 font-semibold text-sm">處理日誌</h3>
+                                <button onclick="document.getElementById('bufferLog').innerHTML = ''" 
+                                    class="text-gray-500 hover:text-gray-300 text-xs">
+                                    <i class="fas fa-trash"></i> 清除
+                                </button>
+                            </div>
+                            <div id="bufferLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-sm space-y-1">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 倒數計時器分頁內容 -->
+                    <div id="tab-timer" class="tab-content hidden flex-col h-full">
+                        <!-- 計時器設定區域 -->
+                        <div class="flex flex-wrap gap-3 mb-3">
+                            <!-- 預設時間按鈕 -->
+                            <div class="flex gap-2">
+                                <button class="timer-preset px-3 py-2 bg-gray-600 text-white rounded-lg font-medium
+                                             hover:bg-gray-700 transition-colors text-sm" data-seconds="10">
+                                    10秒
+                                </button>
+                                <button class="timer-preset px-3 py-2 bg-gray-600 text-white rounded-lg font-medium
+                                             hover:bg-gray-700 transition-colors text-sm" data-seconds="30">
+                                    30秒
+                                </button>
+                                <button class="timer-preset px-3 py-2 bg-gray-600 text-white rounded-lg font-medium
+                                             hover:bg-gray-700 transition-colors text-sm" data-seconds="60">
+                                    1分鐘
+                                </button>
+                                <button class="timer-preset px-3 py-2 bg-gray-600 text-white rounded-lg font-medium
+                                             hover:bg-gray-700 transition-colors text-sm" data-seconds="300">
+                                    5分鐘
+                                </button>
+                            </div>
+                            
+                            <!-- 自訂時間輸入 -->
+                            <div class="flex items-center gap-2">
+                                <label class="text-gray-300 text-sm">自訂時間:</label>
+                                <input type="number" id="customTimeInput" placeholder="秒數" 
+                                    class="w-24 px-3 py-2 bg-gray-700 text-white rounded-lg text-sm
+                                           focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                                <button id="setCustomTimeBtn"
+                                    class="px-3 py-2 bg-indigo-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-indigo-700 transition-colors">
+                                    設定
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- 計時器控制按鈕 -->
+                        <div class="flex gap-3 mb-3">
+                            <button id="timerStartBtn"
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg font-medium
+                                       hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                <i class="fas fa-play mr-2"></i>開始
+                            </button>
+                            <button id="timerPauseBtn"
+                                class="px-4 py-2 bg-yellow-600 text-white rounded-lg font-medium
+                                       hover:bg-yellow-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i class="fas fa-pause mr-2"></i>暫停
+                            </button>
+                            <button id="timerResumeBtn"
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium
+                                       hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed hidden">
+                                <i class="fas fa-play-circle mr-2"></i>繼續
+                            </button>
+                            <button id="timerResetBtn"
+                                class="px-4 py-2 bg-gray-600 text-white rounded-lg font-medium
+                                       hover:bg-gray-700 transition-colors">
+                                <i class="fas fa-redo mr-2"></i>重置
+                            </button>
+                            <button id="timerExtendBtn"
+                                class="px-4 py-2 bg-purple-600 text-white rounded-lg font-medium
+                                       hover:bg-purple-700 transition-colors">
+                                <i class="fas fa-plus-circle mr-2"></i>延長 10秒
+                            </button>
+                        </div>
+                        
+                        <!-- 多計時器管理 -->
+                        <div class="flex gap-3 mb-3">
+                            <div class="flex items-center gap-2">
+                                <label class="text-gray-300 text-sm">計時器ID:</label>
+                                <input type="text" id="timerIdInput" placeholder="timer1" value="timer1"
+                                    class="w-24 px-3 py-2 bg-gray-700 text-white rounded-lg text-sm
+                                           focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                                <button id="createTimerBtn"
+                                    class="px-3 py-2 bg-teal-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-teal-700 transition-colors">
+                                    <i class="fas fa-plus mr-1"></i>建立
+                                </button>
+                                <button id="switchTimerBtn"
+                                    class="px-3 py-2 bg-orange-600 text-white rounded-lg font-medium text-sm
+                                           hover:bg-orange-700 transition-colors">
+                                    <i class="fas fa-exchange-alt mr-1"></i>切換
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- 計時器顯示區域 -->
+                        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+                            <!-- 主計時器顯示 -->
+                            <div class="bg-gray-800 rounded-lg p-4">
+                                <h3 class="text-gray-400 font-semibold text-sm mb-3">當前計時器</h3>
+                                <div class="text-center">
+                                    <!-- 大型時間顯示 -->
+                                    <div id="timerDisplay" class="text-6xl font-bold text-cyan-400 mb-4 font-mono">
+                                        00:00
+                                    </div>
+                                    
+                                    <!-- 進度條 -->
+                                    <div class="w-full bg-gray-700 rounded-full h-4 mb-4">
+                                        <div id="timerProgressBar" 
+                                             class="bg-gradient-to-r from-cyan-500 to-blue-500 h-4 rounded-full transition-all duration-200"
+                                             style="width: 0%">
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- 狀態資訊 -->
+                                    <div id="timerStatus" class="grid grid-cols-2 gap-2 text-sm">
+                                        <div class="bg-gray-700 rounded p-2">
+                                            <span class="text-gray-400">狀態:</span>
+                                            <span id="timerStateText" class="text-white font-medium ml-1">停止</span>
+                                        </div>
+                                        <div class="bg-gray-700 rounded p-2">
+                                            <span class="text-gray-400">總時間:</span>
+                                            <span id="timerTotalText" class="text-white font-medium ml-1">0秒</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 所有計時器列表 -->
+                            <div class="bg-gray-800 rounded-lg p-4">
+                                <h3 class="text-gray-400 font-semibold text-sm mb-3">所有計時器</h3>
+                                <div id="allTimersList" class="space-y-2 max-h-48 overflow-y-auto">
+                                    <!-- 動態生成計時器列表 -->
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 事件日誌 -->
+                        <div class="flex-1 bg-gray-900 rounded-lg p-4 min-h-0">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-gray-400 font-semibold text-sm">計時器日誌</h3>
+                                <button onclick="document.getElementById('timerLog').innerHTML = ''" 
+                                    class="text-gray-500 hover:text-gray-300 text-xs">
+                                    <i class="fas fa-trash"></i> 清除
+                                </button>
+                            </div>
+                            <div id="timerLog" class="h-full overflow-y-auto custom-scrollbar text-gray-200 font-mono text-sm space-y-1">
                             </div>
                         </div>
                     </div>

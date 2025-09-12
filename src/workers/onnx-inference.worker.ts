@@ -103,7 +103,10 @@ class ONNXInferenceWorker {
     try {
       const hasGPU = !!(self.navigator as any)?.gpu;
       if (hasGPU) {
-        const adapter = await (self.navigator as any).gpu.requestAdapter({ powerPreference: 'high-performance' });
+        // Windows 平台不傳遞 powerPreference 以避免警告
+        const isWin = (self.navigator as any).userAgent?.includes('Windows');
+        const opts = isWin ? {} : { powerPreference: 'high-performance' as const };
+        const adapter = await (self.navigator as any).gpu.requestAdapter(opts);
         if (adapter) {
           this.isWebGPUAvailable = true;
           console.log('[ONNX Worker] WebGPU is available:', (adapter as any)?.name || 'adapter');
@@ -116,7 +119,11 @@ class ONNXInferenceWorker {
     // 配置 ONNX Runtime
     ort.env.wasm.simd = true;
     ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
-    ort.env.webgpu.powerPreference = 'high-performance';
+    // Windows 平台不設置 powerPreference 以避免警告
+    const isWin = (self.navigator as any).userAgent?.includes('Windows');
+    if (!isWin) {
+      ort.env.webgpu.powerPreference = 'high-performance';
+    }
     
     // 設置 WASM 路徑
     ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';

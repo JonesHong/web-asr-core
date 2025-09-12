@@ -871,6 +871,486 @@ initTabSystem();
 // 初始化日誌
 log('vadLog', 'VAD 服務就緒', 'info');
 
+// ========================================
+// Buffer/Chunker 測試相關
+// ========================================
+
+// Buffer/Chunker 測試變數
+let bufferTesting = false;
+let audioRingBuffer = null;
+let audioChunker = null;
+let bufferStats = {
+    totalSamplesWritten: 0,
+    totalChunksProcessed: 0,
+    totalSamplesProcessed: 0
+};
+
+// 初始化 Buffer/Chunker
+function initBufferChunker() {
+    // 創建 RingBuffer (容量 32000 = 2秒 @ 16kHz)
+    audioRingBuffer = new WebASRCore.AudioRingBuffer(32000, false);
+    
+    // 創建 Chunker (預設 512 樣本)
+    const chunkSize = parseInt(document.getElementById('chunkSizeSelect').value);
+    audioChunker = new WebASRCore.AudioChunker(chunkSize, 0); // 無重疊
+    
+    // 重置統計
+    bufferStats = {
+        totalSamplesWritten: 0,
+        totalChunksProcessed: 0,
+        totalSamplesProcessed: 0
+    };
+    
+    updateBufferUI();
+    log('bufferLog', `工具初始化完成 - RingBuffer容量: 32000 樣本, Chunker大小: ${chunkSize} 樣本`, 'success');
+}
+
+// 更新 Buffer/Chunker UI
+function updateBufferUI() {
+    // 更新 RingBuffer 狀態
+    if (audioRingBuffer) {
+        const stats = audioRingBuffer.getStats();
+        const bufferStatsEl = document.getElementById('bufferStats');
+        bufferStatsEl.innerHTML = `
+            <div>容量: <span class="font-bold">${stats.size} / ${stats.capacity}</span></div>
+            <div>可用: <span class="font-bold">${stats.available}</span> 樣本</div>
+            <div>寫入位置: <span class="font-bold">${stats.writePos}</span></div>
+            <div>讀取位置: <span class="font-bold">${stats.readPos}</span></div>
+        `;
+    }
+    
+    // 更新 Chunker 狀態
+    if (audioChunker) {
+        const config = audioChunker.getConfig();
+        const chunkerStatsEl = document.getElementById('chunkerStats');
+        chunkerStatsEl.innerHTML = `
+            <div>塊大小: <span class="font-bold">${config.chunkSize}</span></div>
+            <div>已處理: <span class="font-bold">${bufferStats.totalChunksProcessed}</span> 塊</div>
+            <div>剩餘: <span class="font-bold">${config.remainderSize}</span> 樣本</div>
+            <div>總處理: <span class="font-bold">${bufferStats.totalSamplesProcessed}</span> 樣本</div>
+        `;
+    }
+}
+
+// 處理 Buffer/Chunker 音訊 - 只寫入不自動讀取
+let bufferProcessing = false;
+async function processBufferChunk(audioData) {
+    // 如果不是測試模式且不是手動新增，則返回
+    if (!bufferTesting && !audioRingBuffer) return;
+    if (bufferProcessing) return;
+    
+    bufferProcessing = true;
+    try {
+        // 檢查音訊資料
+        if (audioData.length === 0) {
+            console.warn('收到空的音訊資料');
+            return;
+        }
+        
+        // 計算音訊強度以確認有資料
+        let maxAbs = 0;
+        for (let i = 0; i < audioData.length; i++) {
+            maxAbs = Math.max(maxAbs, Math.abs(audioData[i]));
+        }
+        
+        // 只有在有實際音訊時才記錄（避免靜音刷屏）
+        if (maxAbs > 0.001) {
+            console.log(`收到音訊資料: ${audioData.length} 樣本, 最大振幅: ${maxAbs.toFixed(4)}`);
+        }
+        
+        // 只寫入 RingBuffer，不自動讀取處理
+        const stats = audioRingBuffer.getStats();
+        const wasFull = stats.size === stats.capacity;
+        
+        const written = audioRingBuffer.write(audioData);
+        bufferStats.totalSamplesWritten += written;
+        
+        // 如果緩衝區滿了，提醒用戶
+        if (wasFull && written > 0) {
+            log('bufferLog', 
+                `⚠️ 緩衝區已滿，覆蓋了 ${written} 個最舊的樣本`, 
+                'warning'
+            );
+        }
+        
+        // 如果有顯著音訊，記錄到日誌
+        if (maxAbs > 0.01 && !wasFull) {
+            log('bufferLog', 
+                `寫入 ${written} 樣本 (振幅: ${maxAbs.toFixed(3)})`, 
+                'info'
+            );
+        }
+        
+        // 更新 UI
+        updateBufferUI();
+        
+        // 定期記錄緩衝區狀態
+        if (bufferStats.totalSamplesWritten % 16000 === 0 && bufferStats.totalSamplesWritten > 0) {
+            const stats = audioRingBuffer.getStats();
+            log('bufferLog', 
+                `緩衝區: ${stats.available}/${stats.capacity} 樣本 (${((stats.available / stats.capacity) * 100).toFixed(1)}%)`, 
+                'info'
+            );
+        }
+        
+    } catch (error) {
+        log('bufferLog', `處理錯誤: ${error.message}`, 'error');
+    } finally {
+        bufferProcessing = false;
+    }
+}
+
+// 初始化音訊工具專用的音訊系統
+async function initAudioForTools() {
+    try {
+        // 如果已經初始化，直接返回
+        if (audioContext && microphone && processor) {
+            return true;
+        }
+        
+        // 初始化音訊
+        const success = await initAudio();
+        if (success) {
+            log('bufferLog', '音訊系統初始化成功', 'success');
+            return true;
+        }
+        return false;
+    } catch (error) {
+        log('bufferLog', `音訊初始化失敗: ${error.message}`, 'error');
+        return false;
+    }
+}
+
+// Buffer/Chunker 測試控制
+document.getElementById('bufferStartBtn').addEventListener('click', async () => {
+    // 自動初始化音訊（不需要載入模型）
+    if (!audioContext || !microphone || !processor) {
+        log('bufferLog', '正在初始化音訊系統...', 'info');
+        const success = await initAudioForTools();
+        if (!success) {
+            log('bufferLog', '音訊初始化失敗，請檢查麥克風權限', 'error');
+            return;
+        }
+    }
+    
+    // 初始化 Buffer/Chunker
+    initBufferChunker();
+    
+    bufferTesting = true;
+    
+    // 連接音訊
+    try {
+        microphone.connect(processor);
+        processor.connect(audioContext.destination);
+    } catch (e) {
+        // 已經連接，忽略錯誤
+        console.log('音訊已連接');
+    }
+    
+    // 為音訊工具設定專用的緩衝區
+    let audioToolBuffer = [];
+    
+    // 設定音訊處理 (重用現有的處理器)
+    if (processor && processor.port) {
+        // AudioWorklet 模式 - 為音訊工具新增專門的處理
+        processor.port.onmessage = (event) => {
+            // 處理所有音訊資料類型
+            if (bufferTesting) {
+                if (event.data.type === 'vad') {
+                    processBufferChunk(event.data.data);
+                    if (vadTesting) processVadChunk(event.data.data);
+                } else if (event.data.type === 'wakeword') {
+                    processBufferChunk(event.data.data);
+                    if (wakewordTesting) processWakewordChunk(event.data.data);
+                }
+            } else {
+                // 原始的處理邏輯
+                if (event.data.type === 'vad' && vadTesting) {
+                    processVadChunk(event.data.data);
+                } else if (event.data.type === 'wakeword' && wakewordTesting) {
+                    processWakewordChunk(event.data.data);
+                }
+            }
+        };
+    } else if (processor) {
+        // ScriptProcessor 模式 - 確保能接收音訊
+        processor.onaudioprocess = (e) => {
+            const inputData = e.inputBuffer.getChannelData(0);
+            const resampled = resampleTo16kHz(inputData, audioContext.sampleRate);
+            
+            // 累積音訊到緩衝區
+            if (bufferTesting && resampled.length > 0) {
+                audioToolBuffer.push(...resampled);
+                
+                // 批次處理（每 2048 個樣本處理一次）
+                const batchSize = 2048;
+                while (audioToolBuffer.length >= batchSize) {
+                    const batch = new Float32Array(audioToolBuffer.slice(0, batchSize));
+                    audioToolBuffer = audioToolBuffer.slice(batchSize);
+                    processBufferChunk(batch);
+                }
+            }
+            
+            // 保持原有的 VAD 和 WakeWord 功能
+            if (!bufferTesting && processor._originalOnaudioprocess) {
+                processor._originalOnaudioprocess(e);
+            }
+        };
+    }
+    
+    document.getElementById('bufferStartBtn').disabled = true;
+    document.getElementById('bufferStopBtn').disabled = false;
+    
+    log('bufferLog', '開始音訊工具測試 - 正在處理音訊流...', 'success');
+});
+
+document.getElementById('bufferStopBtn').addEventListener('click', () => {
+    bufferTesting = false;
+    
+    // 只在沒有其他服務使用時才斷開連接
+    if (!vadTesting && !wakewordTesting && !whisperRecording) {
+        try {
+            processor.disconnect();
+            microphone.disconnect();
+        } catch (e) {
+            // 忽略斷開連接錯誤
+        }
+    }
+    
+    document.getElementById('bufferStartBtn').disabled = false;
+    document.getElementById('bufferStopBtn').disabled = true;
+    
+    // 顯示最終統計
+    if (audioRingBuffer) {
+        const stats = audioRingBuffer.getStats();
+        log('bufferLog', 
+            `測試停止 - 總寫入: ${bufferStats.totalSamplesWritten} 樣本, ` +
+            `總處理: ${bufferStats.totalChunksProcessed} 塊`, 
+            'warning'
+        );
+    }
+});
+
+// 清空緩衝區按鈕
+document.getElementById('bufferClearBtn').addEventListener('click', () => {
+    if (audioRingBuffer) {
+        audioRingBuffer.clear();
+    }
+    if (audioChunker) {
+        audioChunker.reset();
+    }
+    
+    bufferStats = {
+        totalSamplesWritten: 0,
+        totalChunksProcessed: 0,
+        totalSamplesProcessed: 0
+    };
+    
+    updateBufferUI();
+    log('bufferLog', '緩衝區已清空', 'info');
+});
+
+// Chunk Size 選擇改變
+document.getElementById('chunkSizeSelect').addEventListener('change', (e) => {
+    const newSize = parseInt(e.target.value);
+    
+    if (audioChunker) {
+        audioChunker.setChunkSize(newSize, true); // 保留剩餘資料
+        log('bufferLog', `Chunk 大小改為: ${newSize}`, 'info');
+        updateBufferUI();
+    }
+});
+
+// 手動新增樣本按鈕
+document.getElementById('addSamplesBtn').addEventListener('click', () => {
+    // 確保已初始化
+    if (!audioRingBuffer || !audioChunker) {
+        initBufferChunker();
+    }
+    
+    const samplesCount = parseInt(document.getElementById('manualSamplesInput').value) || 1000;
+    
+    // 生成測試音訊資料（正弦波）
+    const frequency = 440; // A4 音符
+    const amplitude = 0.3;
+    const sampleRate = 16000;
+    const testData = new Float32Array(samplesCount);
+    
+    for (let i = 0; i < samplesCount; i++) {
+        // 生成正弦波
+        testData[i] = amplitude * Math.sin(2 * Math.PI * frequency * i / sampleRate);
+        // 加入一些雜訊讓它更真實
+        testData[i] += (Math.random() - 0.5) * 0.01;
+    }
+    
+    // 處理資料
+    processBufferChunk(testData);
+    
+    log('bufferLog', `手動新增 ${samplesCount} 個測試樣本 (440Hz 正弦波)`, 'info');
+});
+
+// 三倍寫入按鈕
+document.getElementById('tripleWriteBtn').addEventListener('click', () => {
+    // 確保已初始化
+    if (!audioRingBuffer || !audioChunker) {
+        initBufferChunker();
+    }
+    
+    const samplesCount = parseInt(document.getElementById('manualSamplesInput').value) || 1000;
+    
+    // 生成測試音訊資料
+    const frequency = 880; // A5 音符（較高音）
+    const amplitude = 0.3;
+    const sampleRate = 16000;
+    const testData = new Float32Array(samplesCount);
+    
+    for (let i = 0; i < samplesCount; i++) {
+        testData[i] = amplitude * Math.sin(2 * Math.PI * frequency * i / sampleRate);
+        testData[i] += (Math.random() - 0.5) * 0.01;
+    }
+    
+    // 寫入三次
+    for (let j = 0; j < 3; j++) {
+        processBufferChunk(testData);
+    }
+    
+    log('bufferLog', `三倍寫入：${samplesCount} x 3 = ${samplesCount * 3} 個樣本 (880Hz)`, 'warning');
+});
+
+// 查看按鈕（非破壞性）
+document.getElementById('peekBtn').addEventListener('click', () => {
+    if (!audioRingBuffer) {
+        log('bufferLog', '請先初始化緩衝區', 'error');
+        return;
+    }
+    
+    const peekSize = parseInt(document.getElementById('peekSizeInput').value) || 100;
+    const stats = audioRingBuffer.getStats();
+    const peekedData = audioRingBuffer.peek(peekSize);  // 非破壞性查看！
+    
+    if (peekedData) {
+        // 計算統計資訊
+        let min = Infinity, max = -Infinity, sum = 0;
+        for (let i = 0; i < peekedData.length; i++) {
+            min = Math.min(min, peekedData[i]);
+            max = Math.max(max, peekedData[i]);
+            sum += Math.abs(peekedData[i]);
+        }
+        const avg = sum / peekedData.length;
+        
+        log('bufferLog', 
+            `👁️ 查看 ${peekedData.length} 個樣本（非破壞性，資料仍在緩衝區）- ` +
+            `最小: ${min.toFixed(4)}, 最大: ${max.toFixed(4)}, 平均振幅: ${avg.toFixed(4)}`,
+            'info'
+        );
+        
+        // 視覺化查看的資料
+        drawWaveform('bufferCanvas', peekedData);
+    } else {
+        log('bufferLog', 
+            `❌ 資料不足：緩衝區只有 ${stats.available} 個樣本，無法查看 ${peekSize} 個`, 
+            'warning'
+        );
+    }
+});
+
+// 跳過按鈕（破壞性，丟棄資料）
+document.getElementById('skipBtn').addEventListener('click', () => {
+    if (!audioRingBuffer) {
+        log('bufferLog', '請先初始化緩衝區', 'error');
+        return;
+    }
+    
+    const skipSize = parseInt(document.getElementById('skipSizeInput').value) || 512;
+    const beforeStats = audioRingBuffer.getStats();
+    const actualSkipped = audioRingBuffer.skip(skipSize);
+    const afterStats = audioRingBuffer.getStats();
+    
+    if (actualSkipped > 0) {
+        log('bufferLog', 
+            `⏭️ 跳過（丟棄）${actualSkipped} 個樣本 ` +
+            `(剩餘: ${afterStats.available}/${afterStats.capacity})`, 
+            'warning'
+        );
+    } else {
+        log('bufferLog', 
+            `❌ 無法跳過：緩衝區只有 ${beforeStats.available} 個樣本`, 
+            'warning'
+        );
+    }
+    updateBufferUI();
+});
+
+// 手動 Chunk 按鈕
+document.getElementById('manualChunkBtn').addEventListener('click', () => {
+    if (!audioRingBuffer) {
+        log('bufferLog', '請先初始化緩衝區', 'error');
+        return;
+    }
+    
+    const chunkSize = parseInt(document.getElementById('manualChunkSizeInput').value) || 512;
+    const beforeStats = audioRingBuffer.getStats();
+    const chunkData = audioRingBuffer.read(chunkSize);  // 破壞性讀取！
+    
+    if (chunkData) {
+        const afterStats = audioRingBuffer.getStats();
+        
+        // 使用 Chunker 處理（如果有剩餘資料的話）
+        if (audioChunker) {
+            const chunks = audioChunker.chunk(chunkData);
+            if (chunks.length > 0) {
+                log('bufferLog', 
+                    `📤 手動 Chunk：從緩衝區移除 ${chunkSize} 個樣本，產生 ${chunks.length} 個塊 ` +
+                    `(剩餘: ${afterStats.available}/${afterStats.capacity})`,
+                    'success'
+                );
+                
+                // 更新統計
+                bufferStats.totalChunksProcessed += chunks.length;
+                bufferStats.totalSamplesProcessed += chunkSize;
+                
+                // 視覺化最後一個 chunk
+                drawWaveform('bufferCanvas', chunks[chunks.length - 1]);
+            } else {
+                log('bufferLog', 
+                    `📤 手動 Chunk：從緩衝區移除 ${chunkSize} 個樣本（累積在 Chunker 剩餘）` +
+                    `(剩餘: ${afterStats.available}/${afterStats.capacity})`, 
+                    'info'
+                );
+            }
+        } else {
+            log('bufferLog', 
+                `📤 手動讀取：從緩衝區移除 ${chunkSize} 個樣本 ` +
+                `(剩餘: ${afterStats.available}/${afterStats.capacity})`, 
+                'success'
+            );
+            drawWaveform('bufferCanvas', chunkData);
+        }
+        
+        updateBufferUI();
+    } else {
+        const available = beforeStats.available;
+        log('bufferLog', 
+            `❌ 資料不足：緩衝區只有 ${available} 個樣本，無法讀取 ${chunkSize} 個`, 
+            'warning'
+        );
+    }
+});
+
+// 調整緩衝區大小按鈕
+document.getElementById('resizeBufferBtn').addEventListener('click', () => {
+    const newSize = parseInt(document.getElementById('bufferSizeInput').value) || 32000;
+    
+    // 重新建立 RingBuffer
+    audioRingBuffer = new WebASRCore.AudioRingBuffer(newSize, false);
+    
+    // 重置統計
+    bufferStats.totalSamplesWritten = 0;
+    
+    log('bufferLog', `緩衝區容量調整為: ${newSize} 樣本`, 'success');
+    updateBufferUI();
+});
+
 // 系統診斷按鈕事件
 document.getElementById('diagnosticBtn').addEventListener('click', async () => {
     const btn = document.getElementById('diagnosticBtn');
@@ -977,5 +1457,383 @@ document.getElementById('diagnosticBtn').addEventListener('click', async () => {
         btn.disabled = false;
     }
 });
-log('wakewordLog', '喚醒詞服務就緒', 'info');
-log('whisperLog', 'Whisper 服務就緒', 'info');
+
+// ========================================
+// 倒數計時器測試相關
+// ========================================
+
+// 計時器管理器實例
+let timerManager = null;
+let currentTimerId = 'timer1';
+let updateInterval = null;
+
+// 初始化計時器管理器
+function initTimerManager() {
+    if (!timerManager) {
+        timerManager = new WebASRCore.TimerManager();
+        log('timerLog', '計時器管理器初始化完成', 'success');
+    }
+}
+
+// 格式化時間顯示
+function formatTime(milliseconds) {
+    const totalSeconds = Math.ceil(milliseconds / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+}
+
+// 格式化時間（帶毫秒）
+function formatTimeWithMs(milliseconds) {
+    const totalSeconds = Math.floor(milliseconds / 1000);
+    const ms = Math.floor((milliseconds % 1000) / 10); // 顯示兩位毫秒
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+}
+
+// 更新計時器顯示
+function updateTimerDisplay() {
+    if (!timerManager) return;
+    
+    const state = timerManager.getTimerState(currentTimerId);
+    if (!state) return;
+    
+    // 更新時間顯示
+    const remaining = timerManager.getRemainingTime(currentTimerId);
+    document.getElementById('timerDisplay').textContent = formatTime(remaining);
+    
+    // 更新進度條
+    const progress = timerManager.getProgress(currentTimerId);
+    document.getElementById('timerProgressBar').style.width = `${progress}%`;
+    
+    // 更新狀態文字
+    let stateText = '停止';
+    if (state.isRunning) {
+        stateText = '運行中';
+    } else if (state.pausedAt !== undefined) {
+        stateText = '暫停';
+    } else if (remaining === 0) {
+        stateText = '已結束';
+    }
+    document.getElementById('timerStateText').textContent = stateText;
+    
+    // 更新總時間
+    document.getElementById('timerTotalText').textContent = `${Math.ceil(state.totalTime / 1000)}秒`;
+    
+    // 如果時間到了，變成紅色閃爍
+    if (remaining === 0 && state.isRunning === false) {
+        document.getElementById('timerDisplay').classList.add('text-red-500', 'animate-pulse');
+    } else {
+        document.getElementById('timerDisplay').classList.remove('text-red-500', 'animate-pulse');
+    }
+}
+
+// 更新所有計時器列表
+function updateAllTimersList() {
+    if (!timerManager) return;
+    
+    const allTimers = timerManager.getAllTimers();
+    const listEl = document.getElementById('allTimersList');
+    
+    if (allTimers.size === 0) {
+        listEl.innerHTML = '<div class="text-gray-500 text-sm">尚無計時器</div>';
+        return;
+    }
+    
+    let html = '';
+    for (const [id, state] of allTimers) {
+        const remaining = WebASRCore.Timer.getRemainingTime(state);
+        const progress = WebASRCore.Timer.getProgress(state);
+        const isActive = id === currentTimerId;
+        
+        html += `
+            <div class="bg-gray-700 rounded p-2 ${isActive ? 'ring-2 ring-cyan-500' : ''}">
+                <div class="flex justify-between items-center mb-1">
+                    <span class="text-white font-medium text-sm">${id}</span>
+                    <span class="text-gray-400 text-xs">${formatTime(remaining)}</span>
+                </div>
+                <div class="w-full bg-gray-600 rounded-full h-2">
+                    <div class="bg-cyan-500 h-2 rounded-full transition-all" style="width: ${progress}%"></div>
+                </div>
+                <div class="flex justify-between mt-1">
+                    <span class="text-gray-400 text-xs">
+                        ${state.isRunning ? '運行中' : state.pausedAt !== undefined ? '暫停' : '停止'}
+                    </span>
+                    ${!isActive ? `
+                        <button onclick="switchToTimer('${id}')" 
+                                class="text-cyan-400 hover:text-cyan-300 text-xs">
+                            切換
+                        </button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }
+    
+    listEl.innerHTML = html;
+}
+
+// 切換到指定計時器
+window.switchToTimer = function(timerId) {
+    currentTimerId = timerId;
+    document.getElementById('timerIdInput').value = timerId;
+    updateTimerDisplay();
+    updateAllTimersList();
+    log('timerLog', `切換到計時器: ${timerId}`, 'info');
+};
+
+// log 函數已在前面定義，這裡不需要重複定義
+
+// 預設時間按鈕
+document.querySelectorAll('.timer-preset').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+        const seconds = parseInt(e.target.dataset.seconds);
+        const milliseconds = seconds * 1000;
+        
+        initTimerManager();
+        
+        // 創建新計時器
+        timerManager.createTimer(currentTimerId, {
+            duration: milliseconds,
+            onTimeout: () => {
+                log('timerLog', `⏰ 計時器 ${currentTimerId} 時間到！`, 'warning');
+                updateTimerDisplay();
+                updateAllTimersList();
+                
+                // 播放提示音（可選）
+                const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQ==');
+                audio.play().catch(() => {});
+            },
+            onTick: (remaining) => {
+                // Tick 回調已在 TimerManager 內部處理
+            },
+            tickInterval: 100
+        });
+        
+        updateTimerDisplay();
+        updateAllTimersList();
+        log('timerLog', `設定計時器 ${currentTimerId}: ${seconds}秒`, 'info');
+    });
+});
+
+// 自訂時間設定
+document.getElementById('setCustomTimeBtn').addEventListener('click', () => {
+    const seconds = parseInt(document.getElementById('customTimeInput').value);
+    if (isNaN(seconds) || seconds <= 0) {
+        log('timerLog', '請輸入有效的秒數', 'error');
+        return;
+    }
+    
+    const milliseconds = seconds * 1000;
+    initTimerManager();
+    
+    timerManager.createTimer(currentTimerId, {
+        duration: milliseconds,
+        onTimeout: () => {
+            log('timerLog', `⏰ 計時器 ${currentTimerId} 時間到！`, 'warning');
+            updateTimerDisplay();
+            updateAllTimersList();
+        },
+        tickInterval: 100
+    });
+    
+    updateTimerDisplay();
+    updateAllTimersList();
+    log('timerLog', `設定計時器 ${currentTimerId}: ${seconds}秒`, 'info');
+});
+
+// 開始按鈕
+document.getElementById('timerStartBtn').addEventListener('click', () => {
+    initTimerManager();
+    
+    // 如果當前計時器不存在，先創建一個預設 30 秒的
+    if (!timerManager.getTimerState(currentTimerId)) {
+        timerManager.createTimer(currentTimerId, {
+            duration: 30000,
+            onTimeout: () => {
+                log('timerLog', `⏰ 計時器 ${currentTimerId} 時間到！`, 'warning');
+                updateTimerDisplay();
+                updateAllTimersList();
+            },
+            tickInterval: 100
+        });
+    }
+    
+    timerManager.startTimer(currentTimerId);
+    
+    // 開始更新顯示
+    if (updateInterval) clearInterval(updateInterval);
+    updateInterval = setInterval(() => {
+        updateTimerDisplay();
+        updateAllTimersList();
+    }, 100);
+    
+    // 更新按鈕狀態
+    document.getElementById('timerStartBtn').disabled = true;
+    document.getElementById('timerPauseBtn').disabled = false;
+    document.getElementById('timerResumeBtn').classList.add('hidden');
+    
+    log('timerLog', `▶️ 開始計時器 ${currentTimerId}`, 'success');
+});
+
+// 暫停按鈕
+document.getElementById('timerPauseBtn').addEventListener('click', () => {
+    if (!timerManager) return;
+    
+    timerManager.pauseTimer(currentTimerId);
+    
+    // 停止更新
+    if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
+    }
+    
+    // 更新按鈕狀態
+    document.getElementById('timerPauseBtn').classList.add('hidden');
+    document.getElementById('timerPauseBtn').disabled = true;
+    document.getElementById('timerResumeBtn').classList.remove('hidden');
+    document.getElementById('timerResumeBtn').disabled = false;
+    
+    updateTimerDisplay();
+    updateAllTimersList();
+    log('timerLog', `⏸️ 暫停計時器 ${currentTimerId}`, 'warning');
+});
+
+// 繼續按鈕
+document.getElementById('timerResumeBtn').addEventListener('click', () => {
+    if (!timerManager) return;
+    
+    timerManager.startTimer(currentTimerId);
+    
+    // 重新開始更新
+    if (updateInterval) clearInterval(updateInterval);
+    updateInterval = setInterval(() => {
+        updateTimerDisplay();
+        updateAllTimersList();
+    }, 100);
+    
+    // 更新按鈕狀態
+    document.getElementById('timerResumeBtn').classList.add('hidden');
+    document.getElementById('timerResumeBtn').disabled = true;
+    document.getElementById('timerPauseBtn').classList.remove('hidden');
+    document.getElementById('timerPauseBtn').disabled = false;
+    
+    log('timerLog', `▶️ 繼續計時器 ${currentTimerId}`, 'success');
+});
+
+// 重置按鈕
+document.getElementById('timerResetBtn').addEventListener('click', () => {
+    if (!timerManager) return;
+    
+    timerManager.resetTimer(currentTimerId);
+    
+    // 停止更新
+    if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
+    }
+    
+    // 重置按鈕狀態
+    document.getElementById('timerStartBtn').disabled = false;
+    document.getElementById('timerPauseBtn').disabled = true;
+    document.getElementById('timerPauseBtn').classList.remove('hidden');
+    document.getElementById('timerResumeBtn').classList.add('hidden');
+    
+    updateTimerDisplay();
+    updateAllTimersList();
+    log('timerLog', `🔄 重置計時器 ${currentTimerId}`, 'info');
+});
+
+// 延長時間按鈕
+document.getElementById('timerExtendBtn').addEventListener('click', () => {
+    if (!timerManager) return;
+    
+    const state = timerManager.getTimerState(currentTimerId);
+    if (!state) {
+        log('timerLog', '請先創建計時器', 'error');
+        return;
+    }
+    
+    timerManager.extendTimer(currentTimerId, 10000); // 延長 10 秒
+    
+    updateTimerDisplay();
+    updateAllTimersList();
+    log('timerLog', `➕ 計時器 ${currentTimerId} 延長 10 秒`, 'info');
+});
+
+// 創建新計時器
+document.getElementById('createTimerBtn').addEventListener('click', () => {
+    const timerId = document.getElementById('timerIdInput').value.trim();
+    if (!timerId) {
+        log('timerLog', '請輸入計時器 ID', 'error');
+        return;
+    }
+    
+    initTimerManager();
+    
+    // 檢查是否已存在
+    if (timerManager.getTimerState(timerId)) {
+        log('timerLog', `計時器 ${timerId} 已存在`, 'warning');
+        currentTimerId = timerId;
+        updateTimerDisplay();
+        updateAllTimersList();
+        return;
+    }
+    
+    // 創建新計時器（預設 30 秒）
+    timerManager.createTimer(timerId, {
+        duration: 30000,
+        onTimeout: () => {
+            log('timerLog', `⏰ 計時器 ${timerId} 時間到！`, 'warning');
+            if (timerId === currentTimerId) {
+                updateTimerDisplay();
+            }
+            updateAllTimersList();
+        },
+        tickInterval: 100
+    });
+    
+    currentTimerId = timerId;
+    updateTimerDisplay();
+    updateAllTimersList();
+    log('timerLog', `✨ 創建計時器: ${timerId}`, 'success');
+});
+
+// 切換計時器
+document.getElementById('switchTimerBtn').addEventListener('click', () => {
+    const timerId = document.getElementById('timerIdInput').value.trim();
+    if (!timerId) {
+        log('timerLog', '請輸入計時器 ID', 'error');
+        return;
+    }
+    
+    if (!timerManager || !timerManager.getTimerState(timerId)) {
+        log('timerLog', `計時器 ${timerId} 不存在`, 'error');
+        return;
+    }
+    
+    // 停止當前計時器的更新（如果有的話）
+    if (updateInterval) {
+        clearInterval(updateInterval);
+        updateInterval = null;
+    }
+    
+    currentTimerId = timerId;
+    
+    // 如果新計時器正在運行，開始更新
+    const state = timerManager.getTimerState(timerId);
+    if (state && state.isRunning) {
+        updateInterval = setInterval(() => {
+            updateTimerDisplay();
+            updateAllTimersList();
+        }, 100);
+    }
+    
+    updateTimerDisplay();
+    updateAllTimersList();
+    log('timerLog', `🔄 切換到計時器: ${timerId}`, 'info');
+});
+
+// 初始化計時器顯示
+log('timerLog', '倒數計時器測試就緒', 'info');

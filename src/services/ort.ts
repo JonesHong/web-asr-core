@@ -65,9 +65,12 @@ export class ORTService {
         return false;
       }
       
-      const adapter = await (navigator as any).gpu.requestAdapter({
+      // Windows 平台不傳遞 powerPreference 以避免警告
+      const isWin = navigator.userAgent.includes('Windows');
+      const adapterOptions = isWin ? {} : {
         powerPreference: config.onnx.webgpu.powerPreference
-      });
+      };
+      const adapter = await (navigator as any).gpu.requestAdapter(adapterOptions);
       
       if (!adapter) {
         return false;
@@ -101,7 +104,11 @@ export class ORTService {
     
     // 配置 WebGPU（如果可用）
     if (this.webgpuAvailable && config.onnx.webgpu.enabled) {
-      ort.env.webgpu.powerPreference = config.onnx.webgpu.powerPreference;
+      // Windows 平台不設置 powerPreference 以避免警告
+      const isWin = navigator.userAgent.includes('Windows');
+      if (!isWin) {
+        ort.env.webgpu.powerPreference = config.onnx.webgpu.powerPreference;
+      }
     }
     
     // 配置日誌級別
@@ -293,7 +300,10 @@ export class ORTService {
             modelPath,
             executionProviders,
             webgpuOptions: config.onnx.webgpu.enabled ? {
-              powerPreference: config.onnx.webgpu.powerPreference
+              // Windows 平台不傳遞 powerPreference 以避免警告
+              ...(navigator.userAgent.includes('Windows') ? {} : {
+                powerPreference: config.onnx.webgpu.powerPreference
+              })
             } : undefined,
             wasmOptions: {
               simd: config.onnx.wasm.simd,
@@ -339,7 +349,10 @@ export class ORTService {
           modelPath,
           executionProviders,
           webgpuOptions: config.onnx.webgpu.enabled ? {
-            powerPreference: config.onnx.webgpu.powerPreference
+            // Windows 平台不傳遞 powerPreference 以避免警告
+            ...(navigator.userAgent.includes('Windows') ? {} : {
+              powerPreference: config.onnx.webgpu.powerPreference
+            })
           } : undefined,
           wasmOptions: {
             simd: config.onnx.wasm.simd,

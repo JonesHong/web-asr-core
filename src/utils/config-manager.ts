@@ -62,8 +62,8 @@ export class ConfigManager {
      * VAD 模型檔案路徑
      * @default './models/silero_vad_v6.onnx'
      */
-    modelPath: './models/silero_vad_v6.onnx',
-    
+    modelPath: './models/github/snakers4/silero-vad/silero_vad_v6.onnx',
+
     /**
      * 語音檢測閾值（0-1）
      * @description 高於此值判定為語音，低於此值判定為靜音
@@ -527,6 +527,122 @@ export class ConfigManager {
      * @default 32
      */
     bitDepth: 32,
+    
+    /**
+     * 環形緩衝區配置
+     * @description AudioRingBuffer 的配置參數
+     */
+    ringBuffer: {
+      /**
+       * 緩衝區容量（樣本數）
+       * @description 預設為 10 秒的音訊 (16000 * 10)
+       * @default 160000
+       */
+      capacity: 160000,
+      
+      /**
+       * 是否使用 SharedArrayBuffer
+       * @description 用於 Web Worker 共享記憶體
+       * @default false
+       */
+      useSharedArrayBuffer: false,
+    },
+    
+    /**
+     * 音訊分塊配置
+     * @description AudioChunker 的配置參數
+     */
+    chunker: {
+      /**
+       * VAD 音訊塊配置
+       */
+      vad: {
+        /**
+         * 塊大小（樣本數）
+         * @description 32ms @ 16kHz
+         * @default 512
+         */
+        chunkSize: 512,
+        
+        /**
+         * 重疊樣本數
+         * @description 用於保持連續性的上下文
+         * @default 64
+         */
+        overlap: 64,
+      },
+      
+      /**
+       * 喚醒詞音訊塊配置
+       */
+      wakeword: {
+        /**
+         * 塊大小（樣本數）
+         * @description 80ms @ 16kHz
+         * @default 1280
+         */
+        chunkSize: 1280,
+        
+        /**
+         * 重疊樣本數
+         * @description 喚醒詞通常不需要重疊
+         * @default 0
+         */
+        overlap: 0,
+      },
+      
+      /**
+       * Whisper 音訊塊配置
+       */
+      whisper: {
+        /**
+         * 塊大小（樣本數）
+         * @description 30 秒 @ 16kHz
+         * @default 480000
+         */
+        chunkSize: 480000,
+        
+        /**
+         * 重疊樣本數
+         * @description 5 秒重疊防止邊界語音被截斷
+         * @default 80000
+         */
+        overlap: 80000,
+      },
+    },
+    
+    /**
+     * 計時器配置
+     */
+    timer: {
+      /**
+       * VAD 靜音超時時間（毫秒）
+       * @description 檢測到靜音後等待的時間，用於判斷使用者是否結束說話
+       * @default 1500
+       */
+      vadSilenceTimeout: 1500,
+      
+      /**
+       * 喚醒詞等待超時（毫秒）
+       * @description 檢測到喚醒詞後等待使用者說話的最長時間
+       * @default 5000
+       */
+      wakewordTimeout: 5000,
+      
+      /**
+       * 錄音最大時長（毫秒）
+       * @description 單次錄音的最大時長限制
+       * @default 30000
+       */
+      maxRecordingDuration: 30000,
+      
+      /**
+       * Tick 間隔（毫秒）
+       * @description 計時器更新間隔
+       * @default 100
+       */
+      tickInterval: 100,
+    },
   };
 
   /**

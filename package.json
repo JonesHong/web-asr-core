@@ -1,13 +1,25 @@
 {
   "name": "web-asr-core",
-  "version": "0.1.0",
-  "description": "WebASR Core - Stateless TypeScript services for VAD, WakeWord and Whisper",
+  "version": "0.3.0",
+  "description": "WebASR Core - Browser-based speech processing with VAD, WakeWord and Whisper (includes ULTIMATE all-in-one CDN version)",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
-  "unpkg": "dist/web-asr-core.umd.min.js",
-  "jsdelivr": "dist/web-asr-core.umd.min.js",
+  "unpkg": "dist/web-asr-core.ultimate.min.js",
+  "jsdelivr": "dist/web-asr-core.ultimate.min.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "browser": "./dist/web-asr-core.ultimate.min.js"
+    },
+    "./slim": "./dist/web-asr-core.umd.min.js",
+    "./all": "./dist/web-asr-core.all.min.js",
+    "./ultimate": "./dist/web-asr-core.ultimate.min.js",
+    "./ort/*.wasm": "./dist/*.wasm",
+    "./ort/*.mjs": "./dist/*.mjs"
+  },
   "browser": "dist/web-asr-core.umd.js",
   "files": [
     "dist/**/*",

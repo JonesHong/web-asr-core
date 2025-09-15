@@ -22,12 +22,52 @@ npm install web-asr-core
 ```
 
 ### CDN 載入
+
+#### 方法一：ULTIMATE 版本（最推薦）🚀
+**只需一個 `<script>` 標籤，包含 Whisper 完整功能！**
+
 ```html
-<!-- ONNX Runtime (必要) -->
+<!-- 包含 Transformers.js、ONNX Runtime 和所有功能 -->
+<script src="https://unpkg.com/web-asr-core@latest/dist/web-asr-core.ultimate.min.js"></script>
+
+<script>
+  // 所有服務已自動載入並配置，包括 Whisper！
+  const vadService = new WebASRCore.VadService();
+  const whisperService = new WebASRCore.WhisperService();
+  // Transformers.js 已自動配置 WASM 路徑
+</script>
+```
+
+#### 方法二：ALL-IN-ONE 版本
+包含 ONNX Runtime，但 Whisper 需額外載入 Transformers.js：
+
+```html
+<!-- 載入核心功能（VAD、喚醒詞） -->
+<script src="https://unpkg.com/web-asr-core@latest/dist/web-asr-core.all.min.js"></script>
+
+<!-- 如需 Whisper，額外載入 Transformers.js -->
+<script type="module">
+  import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3';
+  env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3/dist/';
+  window.transformers = { pipeline, env };
+</script>
+```
+
+#### 方法三：輕量版本（需手動載入依賴）
+適合已有 ONNX Runtime 的專案：
+
+```html
+<!-- 1. 先載入 ONNX Runtime -->
 <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
 
-<!-- WebASRCore -->
-<script src="https://unpkg.com/web-asr-core@0.1.0/dist/web-asr-core.umd.min.js"></script>
+<!-- 2. 如需 Whisper 功能，載入 Transformers.js -->
+<script type="module">
+  import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3';
+  window.transformers = { pipeline, env };
+</script>
+
+<!-- 3. 載入 WebASRCore 輕量版 -->
+<script src="https://unpkg.com/web-asr-core@latest/dist/web-asr-core.umd.min.js"></script>
 ```
 
 ## 🎮 快速開始

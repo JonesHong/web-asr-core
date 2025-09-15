@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebASRCore ULTIMATE 版本測試 - 單一 Script 標籤</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 900px;
+            margin: 50px auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.2);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        .highlight {
+            background: #f0f0ff;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+        .control-panel {
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            margin: 5px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: transform 0.2s;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+        }
+        #log {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 8px;
+            padding: 20px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Cascadia Code', 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid transparent;
+        }
+        .info {
+            color: #58a6ff;
+            border-left-color: #58a6ff;
+        }
+        .success {
+            color: #56d364;
+            border-left-color: #56d364;
+        }
+        .warning {
+            color: #f0883e;
+            border-left-color: #f0883e;
+        }
+        .error {
+            color: #f85149;
+            border-left-color: #f85149;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        .status-item {
+            display: flex;
+            align-items: center;
+        }
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-ready {
+            background: #56d364;
+        }
+        .status-loading {
+            background: #f0883e;
+            animation: pulse 1.5s infinite;
+        }
+        .status-error {
+            background: #f85149;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 WebASRCore ULTIMATE 版本測試</h1>
+        <p class="subtitle">只需要 <span class="highlight">&lt;script&gt;</span> 標籤 - 包含所有功能！</p>
+
+        <div class="status-bar">
+            <div class="status-item">
+                <div id="coreStatus" class="status-indicator status-loading"></div>
+                <span>WebASRCore: <span id="coreText">載入中...</span></span>
+            </div>
+            <div class="status-item">
+                <div id="transformersStatus" class="status-indicator status-loading"></div>
+                <span>Transformers.js: <span id="transformersText">等待中...</span></span>
+            </div>
+            <div class="status-item">
+                <div id="ortStatus" class="status-indicator status-loading"></div>
+                <span>ONNX Runtime: <span id="ortText">等待中...</span></span>
+            </div>
+        </div>
+
+        <div class="control-panel">
+            <h3>功能測試</h3>
+            <button id="testVadBtn">測試 VAD</button>
+            <button id="testWakewordBtn">測試喚醒詞</button>
+            <button id="initWhisperBtn">初始化 Whisper</button>
+            <button id="recordBtn" disabled>開始錄音</button>
+            <button id="stopBtn" disabled>停止錄音</button>
+            <button id="transcribeBtn" disabled>轉譯文字</button>
+        </div>
+
+        <div id="log"></div>
+    </div>
+
+    <!-- 只需要這一個 script 標籤！ -->
+    <script src="dist/web-asr-core.ultimate.min.js"></script>
+
+    <script>
+        // 日誌功能
+        function log(msg, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const time = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${time}] ${msg}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(`[${type}]`, msg);
+        }
+
+        // 更新狀態指示器
+        function updateStatus(id, status, text) {
+            const indicator = document.getElementById(id + 'Status');
+            const textElem = document.getElementById(id + 'Text');
+
+            indicator.className = 'status-indicator';
+            if (status === 'ready') {
+                indicator.classList.add('status-ready');
+            } else if (status === 'loading') {
+                indicator.classList.add('status-loading');
+            } else if (status === 'error') {
+                indicator.classList.add('status-error');
+            }
+
+            textElem.textContent = text;
+        }
+
+        // 全域變數
+        let whisperService = null;
+        let audioData = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+
+        // 初始化檢查
+        log('🚀 ULTIMATE 版本載入測試開始', 'info');
+        log('這個版本只需要一個 script 標籤就能使用所有功能！', 'success');
+
+        // 檢查載入狀態
+        setTimeout(() => {
+            // 檢查 WebASRCore
+            if (window.WebASRCore) {
+                updateStatus('core', 'ready', '已載入');
+                log('✅ WebASRCore 已載入', 'success');
+                const services = Object.keys(window.WebASRCore).filter(k => k.includes('Service'));
+                log(`可用服務: ${services.join(', ')}`, 'info');
+            } else {
+                updateStatus('core', 'error', '未載入');
+                log('❌ WebASRCore 未載入', 'error');
+            }
+
+            // 檢查 Transformers.js
+            if (window.transformers) {
+                updateStatus('transformers', 'ready', '已載入');
+                log('✅ Transformers.js 已自動載入並配置', 'success');
+                log(`環境配置: WASM路徑=${window.transformers.env.backends?.onnx?.wasm?.wasmPaths || '未設定'}`, 'info');
+            } else {
+                updateStatus('transformers', 'error', '未載入');
+                log('⚠️ Transformers.js 未載入（Whisper 功能將不可用）', 'warning');
+            }
+
+            // 檢查 ONNX Runtime
+            if (window.ort) {
+                updateStatus('ort', 'ready', '已載入');
+                log('✅ ONNX Runtime 已載入', 'success');
+            } else {
+                updateStatus('ort', 'error', '未載入');
+                log('⚠️ ONNX Runtime 未載入', 'warning');
+            }
+        }, 1000);
+
+        // 測試 VAD
+        document.getElementById('testVadBtn').addEventListener('click', async () => {
+            try {
+                log('測試 VAD 服務...', 'info');
+                const vadService = new WebASRCore.VadService();
+                await vadService.initialize();
+                log('✅ VAD 服務初始化成功！', 'success');
+
+                // 創建測試音訊
+                const testAudio = new Float32Array(512).fill(0);
+                const result = await vadService.processAudio(testAudio);
+                log(`VAD 測試結果: 語音=${result.isSpeech}, 分數=${result.score.toFixed(3)}`, 'info');
+            } catch (error) {
+                log(`❌ VAD 測試失敗: ${error.message}`, 'error');
+            }
+        });
+
+        // 測試喚醒詞
+        document.getElementById('testWakewordBtn').addEventListener('click', async () => {
+            try {
+                log('測試喚醒詞服務...', 'info');
+                const wakewordService = new WebASRCore.WakewordService();
+                await wakewordService.initialize('hey-jarvis');
+                log('✅ 喚醒詞服務初始化成功（Hey Jarvis）！', 'success');
+
+                // 創建測試音訊
+                const testAudio = new Float32Array(1280).fill(0);
+                const result = await wakewordService.processAudio(testAudio);
+                log(`喚醒詞測試結果: 檢測=${result.detected}`, 'info');
+            } catch (error) {
+                log(`❌ 喚醒詞測試失敗: ${error.message}`, 'error');
+            }
+        });
+
+        // 初始化 Whisper
+        document.getElementById('initWhisperBtn').addEventListener('click', async () => {
+            const btn = document.getElementById('initWhisperBtn');
+            btn.disabled = true;
+
+            try {
+                if (!window.transformers) {
+                    throw new Error('Transformers.js 未載入');
+                }
+
+                log('初始化 Whisper 服務...', 'info');
+                whisperService = new WebASRCore.WhisperService({
+                    language: 'zh',
+                    temperature: 0.8
+                });
+
+                // 事件監聽
+                whisperService.on('ready', (e) => {
+                    log(`✅ Whisper 模型已就緒: ${e.modelId}`, 'success');
+                    document.getElementById('recordBtn').disabled = false;
+                });
+
+                whisperService.on('error', (e) => {
+                    log(`❌ Whisper 錯誤: ${e.error.message}`, 'error');
+                });
+
+                // 初始化模型
+                log('載入 Whisper 模型 (首次需要下載，請耐心等待)...', 'warning');
+                await whisperService.initialize('Xenova/whisper-tiny', {
+                    quantized: true,
+                    device: 'wasm'
+                });
+
+                log('✅ Whisper 初始化完成！可以開始錄音了', 'success');
+
+            } catch (error) {
+                log(`❌ Whisper 初始化失敗: ${error.message}`, 'error');
+                btn.disabled = false;
+            }
+        });
+
+        // 錄音功能
+        document.getElementById('recordBtn').addEventListener('click', async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        channelCount: 1,
+                        sampleRate: 16000,
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false
+                    }
+                });
+
+                audioChunks = [];
+                mediaRecorder = new MediaRecorder(stream);
+
+                mediaRecorder.ondataavailable = (e) => {
+                    audioChunks.push(e.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+                    const audioContext = new AudioContext({ sampleRate: 16000 });
+                    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                    audioData = audioBuffer.getChannelData(0);
+
+                    const duration = (audioData.length / 16000).toFixed(1);
+                    log(`錄音完成: ${duration} 秒`, 'success');
+                    document.getElementById('transcribeBtn').disabled = false;
+                };
+
+                mediaRecorder.start();
+                log('🔴 錄音中...', 'warning');
+
+                document.getElementById('recordBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+
+            } catch (error) {
+                log(`錄音失敗: ${error.message}`, 'error');
+            }
+        });
+
+        // 停止錄音
+        document.getElementById('stopBtn').addEventListener('click', () => {
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+                mediaRecorder.stream.getTracks().forEach(track => track.stop());
+
+                document.getElementById('stopBtn').disabled = true;
+                document.getElementById('recordBtn').disabled = false;
+                log('錄音已停止', 'info');
+            }
+        });
+
+        // 轉譯功能
+        document.getElementById('transcribeBtn').addEventListener('click', async () => {
+            if (!audioData || !whisperService) {
+                log('無音訊資料或服務未初始化', 'error');
+                return;
+            }
+
+            const btn = document.getElementById('transcribeBtn');
+            btn.disabled = true;
+
+            try {
+                log('開始轉譯...', 'info');
+                const start = Date.now();
+
+                const result = await whisperService.transcribe(audioData);
+
+                const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+                log(`✅ 轉譯完成 (${elapsed}秒)`, 'success');
+                log(`📝 結果: "${result.text}"`, 'success');
+
+            } catch (error) {
+                log(`轉譯失敗: ${error.message}`, 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+
+        // 頁面載入完成提示
+        window.addEventListener('load', () => {
+            log('');
+            log('📌 使用說明:', 'info');
+            log('1. 點擊「測試 VAD」或「測試喚醒詞」來測試基本功能', 'info');
+            log('2. 點擊「初始化 Whisper」來載入語音轉文字模型', 'info');
+            log('3. 初始化完成後可以錄音並轉譯', 'info');
+            log('');
+            log('💡 這個版本只需要一個 script 標籤就包含了所有功能！', 'success');
+        });
+    </script>
+</body>
+</html>

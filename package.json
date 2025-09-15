@@ -4,7 +4,24 @@
   "description": "WebASR Core - Stateless TypeScript services for VAD, WakeWord and Whisper",
   "type": "module",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "unpkg": "dist/web-asr-core.umd.min.js",
+  "jsdelivr": "dist/web-asr-core.umd.min.js",
+  "browser": "dist/web-asr-core.umd.js",
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JonesHong/web-asr-core.git"
+  },
+  "homepage": "https://github.com/JonesHong/web-asr-core#readme",
+  "bugs": {
+    "url": "https://github.com/JonesHong/web-asr-core/issues"
+  },
   "scripts": {
     "build": "tsc && node fix-imports.js",
     "build:raw": "tsc",
@@ -12,7 +29,9 @@
     "bundle": "node build.js",
     "build:all": "npm run build && npm run bundle",
     "dev": "tsc --watch",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build:all",
+    "prepare": "npm run build:all"
   },
   "keywords": [
     "vad",

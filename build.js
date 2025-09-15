@@ -105,7 +105,51 @@ async function build() {
       plugins: [],  // 關鍵：不要用 globalsShimPlugin
     });
     console.log('✅ Standalone bundle created at dist/web-asr-core.standalone.js');
-    
+
+    // Build UMD version for CDN usage
+    console.log('\nBuilding UMD bundle for CDN...');
+    await esbuild.build({
+      entryPoints: ['src/index.ts'],
+      bundle: true,
+      format: 'iife',  // IIFE for browser global
+      globalName: 'WebASRCore',  // Global variable name
+      platform: 'browser',
+      target: 'es2020',
+      outfile: 'dist/web-asr-core.umd.js',
+      sourcemap: true,
+      minify: false,
+      external: [],  // Bundle all dependencies for CDN
+      define: {
+        'process.env.NODE_ENV': '"production"'
+      },
+      footer: {
+        js: `// UMD wrapper\nif (typeof module === 'object' && typeof module.exports === 'object') {\n  module.exports = WebASRCore;\n} else if (typeof define === 'function' && define.amd) {\n  define([], function() { return WebASRCore; });\n}`
+      }
+    });
+    console.log('✅ UMD bundle created at dist/web-asr-core.umd.js');
+
+    // Build minified UMD version
+    console.log('\nBuilding minified UMD bundle...');
+    await esbuild.build({
+      entryPoints: ['src/index.ts'],
+      bundle: true,
+      format: 'iife',
+      globalName: 'WebASRCore',
+      platform: 'browser',
+      target: 'es2020',
+      outfile: 'dist/web-asr-core.umd.min.js',
+      sourcemap: true,
+      minify: true,  // Minified version
+      external: [],
+      define: {
+        'process.env.NODE_ENV': '"production"'
+      },
+      footer: {
+        js: `// UMD wrapper\nif (typeof module === 'object' && typeof module.exports === 'object') {\n  module.exports = WebASRCore;\n} else if (typeof define === 'function' && define.amd) {\n  define([], function() { return WebASRCore; });\n}`
+      }
+    });
+    console.log('✅ Minified UMD bundle created at dist/web-asr-core.umd.min.js');
+
   } catch (error) {
     console.error('Build failed:', error);
     process.exit(1);

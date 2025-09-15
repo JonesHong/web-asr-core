@@ -1,425 +1,445 @@
 # WebASRCore
 
-WebASRCore 是一套無狀態的 TypeScript 服務集合，專為瀏覽器端語音處理設計。提供語音活動檢測（VAD）、喚醒詞檢測和語音識別（Whisper）的純函數實現，完全在瀏覽器中運行。
+WebASRCore 是一套事件驅動的 TypeScript 語音處理服務集合，專為瀏覽器端設計。提供語音活動檢測（VAD）、喚醒詞檢測、語音識別（Whisper）和語音合成（TTS）等功能，完全在瀏覽器中運行。
 
-## 功能特色
+## 🚀 功能特色
 
-- **🎯 無狀態設計**：所有服務都是純函數，沒有內部狀態
-- **🎤 VAD（語音活動檢測）**：使用 Silero VAD 模型
-- **🔊 喚醒詞檢測**：OpenWakeWord 模型（Hey Jarvis、Hey Mycroft、Alexa）
-- **✍️ 語音識別**：透過 transformers.js 使用 Whisper 模型
-- **🚀 瀏覽器優先**：使用 WebAssembly 完全在瀏覽器中運行
+- **🎯 事件驅動架構 v2**：所有服務使用 EventEmitter 模式，解耦服務間依賴
+- **🎤 VAD（語音活動檢測）**：使用 Silero VAD 模型，即時檢測語音活動
+- **🔊 喚醒詞檢測**：支援多種喚醒詞（Hey Jarvis、Alexa 等）
+- **✍️ 語音識別**：透過 transformers.js 使用 Whisper 模型，支援多語言
+- **🗣️ 語音合成**：原生 Web Speech API 支援 TTS/STT
+- **⏱️ 計時器服務**：統一的計時器管理，避免記憶體洩漏
+- **🚀 瀏覽器優先**：使用 WebAssembly 和 ONNX Runtime Web，支援 WebGPU 加速
 - **📦 TypeScript**：完整的型別定義，提供更好的開發體驗
 - **🔧 配置管理**：集中式配置管理器，支援所有參數自訂
 
-## 安裝
+## 📦 安裝
 
+### npm 安裝
 ```bash
 npm install web-asr-core
 ```
 
-## 快速開始
+### CDN 載入
+```html
+<!-- ONNX Runtime (必要) -->
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.min.js"></script>
 
-```typescript
-import {
-  // 註冊表函數
-  loadRegistry,
-  resolveVad,
-  resolveWakeword,
-  resolveWhisper,
-  
-  // VAD 函數
-  loadVadSession,
-  createVadState,
-  processVad,
-  
-  // 喚醒詞函數
-  loadWakewordResources,
-  createWakewordState,
-  processWakewordChunk,
-  
-  // Whisper 函數
-  loadWhisperResources,
-  transcribe,
-  
-  // 配置管理
-  ConfigManager,
-  
-  // 型別
-  DEFAULT_VAD_PARAMS,
-  DEFAULT_WAKEWORD_PARAMS,
-} from 'web-asr-core';
-
-// 載入模型註冊表
-const registry = await loadRegistry('./models/global_registry.json');
-
-// 初始化服務...
+<!-- WebASRCore -->
+<script src="https://unpkg.com/web-asr-core@0.1.0/dist/web-asr-core.umd.min.js"></script>
 ```
 
-## 使用範例
+## 🎮 快速開始
+
+### ES Module 方式
+```typescript
+import {
+  VadService,
+  WakewordService,
+  WhisperService,
+  SpeechService,
+  TimerService,
+  EventEmitter,
+  ConfigManager
+} from 'web-asr-core';
+
+// 初始化服務
+const vadService = new VadService();
+const wakewordService = new WakewordService();
+const whisperService = new WhisperService();
+```
+
+### CDN 方式
+```javascript
+// 從全域變數取得服務
+const {
+  VadService,
+  WakewordService,
+  WhisperService,
+  SpeechService,
+  TimerService
+} = window.WebASRCore;
+
+// 初始化服務
+const vadService = new VadService();
+```
+
+## 📖 使用範例
 
 ### VAD（語音活動檢測）
 
-```typescript
-// 1. 載入 VAD 模型
-const vadInfo = resolveVad(registry);
-const vadSession = await loadVadSession(vadInfo.modelUrl);
+```javascript
+// 建立 VAD 服務
+const vadService = new VadService({
+  threshold: 0.45,           // 檢測閾值
+  minSilenceDuration: 800,   // 最小靜音持續時間（毫秒）
+  minSpeechDuration: 50,     // 最小語音持續時間（毫秒）
+  sampleRate: 16000          // 取樣率
+});
 
-// 2. 建立初始狀態
-let vadState = createVadState();
+// 訂閱事件
+vadService.on('speech-start', () => {
+  console.log('檢測到語音開始');
+});
 
-// 3. 處理音訊塊（16kHz，Float32Array）
-const audioChunk = new Float32Array(512); // 32ms at 16kHz
-const vadResult = await processVad(
-  vadSession,
-  vadState,
-  audioChunk,
-  DEFAULT_VAD_PARAMS
-);
+vadService.on('speech-end', () => {
+  console.log('檢測到語音結束');
+});
 
-// 4. 更新狀態以供下次迭代
-vadState = vadResult.state;
+vadService.on('model-loaded', () => {
+  console.log('VAD 模型載入完成');
+});
 
-// 5. 檢查是否檢測到語音
-if (vadResult.detected) {
-  console.log('檢測到語音！', vadResult.score);
+vadService.on('error', (error) => {
+  console.error('VAD 錯誤:', error);
+});
+
+// 載入模型並開始檢測
+async function startVAD() {
+  await vadService.loadModel();  // 載入模型
+  await vadService.start();       // 開始錄音和檢測
+}
+
+// 停止檢測
+function stopVAD() {
+  vadService.stop();
 }
 ```
 
 ### 喚醒詞檢測
 
-```typescript
-// 1. 載入喚醒詞模型（使用新的 API）
-const config = new ConfigManager();
-const wwResources = await loadWakewordResources('hey_jarvis', config);
+```javascript
+// 建立喚醒詞服務
+const wakewordService = new WakewordService({
+  wakewords: [
+    {
+      model: 'hey_jarvis',
+      threshold: 0.55,
+      displayName: 'Hey Jarvis'
+    },
+    {
+      model: 'alexa',
+      threshold: 0.4,
+      displayName: 'Alexa'
+    }
+  ],
+  chunkSize: 1280,
+  sampleRate: 16000
+});
 
-// 2. 建立初始狀態
-let wwState = createWakewordState(wwResources.dims);
+// 訂閱事件
+wakewordService.on('detection', (data) => {
+  console.log(`檢測到喚醒詞: ${data.wakeword}`, data.score);
+});
 
-// 3. 處理音訊塊（16kHz，Float32Array）
-const audioChunk = new Float32Array(1280); // 80ms at 16kHz
-const wwResult = await processWakewordChunk(
-  wwResources,
-  wwState,
-  audioChunk,
-  { threshold: config.wakeword.hey_jarvis.threshold }
-);
+wakewordService.on('models-loaded', () => {
+  console.log('所有喚醒詞模型載入完成');
+});
 
-// 4. 更新狀態以供下次迭代
-wwState = wwResult.state;
+wakewordService.on('error', (error) => {
+  console.error('喚醒詞錯誤:', error);
+});
 
-// 5. 檢查是否檢測到喚醒詞
-if (wwResult.triggered) {
-  console.log('檢測到喚醒詞！', wwResult.score);
-  // 檢測後重設狀態
-  wwState = resetWakewordState(wwResources.dims);
+// 載入模型並開始檢測
+async function startWakeword() {
+  await wakewordService.loadModels();  // 載入所有配置的模型
+  await wakewordService.start();        // 開始錄音和檢測
+}
+
+// 停止檢測
+function stopWakeword() {
+  wakewordService.stop();
 }
 ```
 
 ### Whisper 語音識別
 
-```typescript
-// 1. 載入 Whisper 模型
-const whisperInfo = resolveWhisper(registry, 'whisper-base');
-const whisperResources = await loadWhisperResources(
-  whisperInfo.path,
-  { quantized: whisperInfo.quantized }
-);
+```javascript
+// 建立 Whisper 服務
+const whisperService = new WhisperService({
+  language: 'zh',          // 語言設定
+  temperature: 0.8,        // 生成溫度
+  maxLength: 500,          // 最大長度
+  minAudioLength: 500      // 最小音訊長度（毫秒）
+});
 
-// 2. 轉錄音訊（16kHz，Float32Array）
-const audioData = new Float32Array(16000 * 5); // 5 秒音訊
-const result = await transcribe(
-  whisperResources,
-  audioData,
-  {
-    language: 'zh',  // 支援中文
-    task: 'transcribe',
-    returnSegments: true,
+// 訂閱事件
+whisperService.on('transcription-start', () => {
+  console.log('開始轉錄...');
+});
+
+whisperService.on('transcription-complete', (data) => {
+  console.log('轉錄完成:', data.text);
+  if (data.segments) {
+    data.segments.forEach(segment => {
+      console.log(`[${segment.start}-${segment.end}]: ${segment.text}`);
+    });
   }
-);
+});
 
-console.log('轉錄結果：', result.text);
-if (result.segments) {
-  result.segments.forEach(segment => {
-    console.log(`[${segment.start}-${segment.end}]: ${segment.text}`);
-  });
+whisperService.on('model-loaded', () => {
+  console.log('Whisper 模型載入完成');
+});
+
+whisperService.on('model-loading', (data) => {
+  console.log('模型載入進度:', data.progress);
+});
+
+whisperService.on('error', (error) => {
+  console.error('Whisper 錯誤:', error);
+});
+
+// 載入模型
+async function loadWhisperModel() {
+  // 本地模型
+  await whisperService.loadModel('local', '/models/huggingface/Xenova/whisper-base');
+
+  // 或遠端模型（從 HuggingFace）
+  // await whisperService.loadModel('remote', 'Xenova/whisper-tiny');
+}
+
+// 轉錄音訊
+async function transcribeAudio(audioData) {
+  const result = await whisperService.transcribe(audioData);
+  console.log('轉錄結果:', result.text);
 }
 ```
 
-## 完整範例：語音助手
+### Speech API（TTS/STT）
 
-```typescript
-import * as WebASRCore from 'web-asr-core';
+```javascript
+// 建立 Speech 服務
+const speechService = new SpeechService();
 
-async function createVoiceAssistant() {
-  // 載入註冊表和模型
-  const registry = await WebASRCore.loadRegistry('./models/global_registry.json');
-  const config = new WebASRCore.ConfigManager();
-  
-  // 初始化 VAD
-  const vadInfo = WebASRCore.resolveVad(registry);
-  const vadSession = await WebASRCore.loadVadSession(vadInfo.modelUrl);
-  let vadState = WebASRCore.createVadState();
-  
-  // 初始化喚醒詞
-  const wwResources = await WebASRCore.loadWakewordResources('hey_jarvis', config);
-  let wwState = WebASRCore.createWakewordState(wwResources.dims);
-  
-  // 初始化 Whisper
-  const whisperInfo = WebASRCore.resolveWhisper(registry, 'whisper-base');
-  const whisperResources = await WebASRCore.loadWhisperResources(
-    whisperInfo.path,
-    { quantized: true }
-  );
-  
-  // 音訊收集緩衝區
-  const audioBuffer: Float32Array[] = [];
-  let isListening = false;
-  
-  // 處理音訊流（每 80ms 處理新的音訊塊）
-  async function processAudioChunk(chunk: Float32Array) {
-    // 未監聽時檢查喚醒詞
-    if (!isListening) {
-      const wwResult = await WebASRCore.processWakewordChunk(
-        wwResources,
-        wwState,
-        chunk,
-        { threshold: config.wakeword.hey_jarvis.threshold }
-      );
-      wwState = wwResult.state;
-      
-      if (wwResult.triggered) {
-        console.log('檢測到喚醒詞！開始監聽...');
-        isListening = true;
-        audioBuffer.length = 0;
-        wwState = WebASRCore.resetWakewordState(wwResources.dims);
-      }
-      return;
-    }
-    
-    // 使用 VAD 檢測語音
-    const vadResult = await WebASRCore.processVad(
-      vadSession,
-      vadState,
-      chunk,
-      WebASRCore.DEFAULT_VAD_PARAMS
-    );
-    vadState = vadResult.state;
-    
-    // 語音活動時收集音訊
-    if (vadResult.detected || vadState.isSpeechActive) {
-      audioBuffer.push(chunk);
-    }
-    
-    // 語音結束時進行轉錄
-    if (!vadState.isSpeechActive && audioBuffer.length > 0) {
-      // 合併音訊塊
-      const totalLength = audioBuffer.reduce((sum, chunk) => sum + chunk.length, 0);
-      const combinedAudio = new Float32Array(totalLength);
-      let offset = 0;
-      for (const chunk of audioBuffer) {
-        combinedAudio.set(chunk, offset);
-        offset += chunk.length;
-      }
-      
-      // 轉錄
-      const result = await WebASRCore.transcribe(
-        whisperResources,
-        combinedAudio,
-        { language: 'zh' }
-      );
-      
-      console.log('您說：', result.text);
-      
-      // 重設以進行下次互動
-      audioBuffer.length = 0;
-      isListening = false;
-    }
-  }
-  
-  return { processAudioChunk };
-}
+// === TTS（文字轉語音）===
+speechService.on('tts-start', () => {
+  console.log('TTS 開始播放');
+});
 
-// 與 Web Audio API 配合使用
-async function startRecording() {
-  const assistant = await createVoiceAssistant();
-  
-  // 取得麥克風權限（關閉音訊處理以獲得原始音訊）
-  const stream = await navigator.mediaDevices.getUserMedia({ 
-    audio: {
-      channelCount: 1,
-      sampleRate: 16000,
-      echoCancellation: false,
-      noiseSuppression: false,
-      autoGainControl: false
-    }
-  });
-  
-  const audioContext = new AudioContext({ sampleRate: 16000 });
-  const source = audioContext.createMediaStreamSource(stream);
-  
-  // 建立處理器處理 80ms 塊
-  const processor = audioContext.createScriptProcessor(1280, 1, 1);
-  
-  processor.onaudioprocess = async (e) => {
-    const inputData = e.inputBuffer.getChannelData(0);
-    await assistant.processAudioChunk(new Float32Array(inputData));
-  };
-  
-  source.connect(processor);
-  processor.connect(audioContext.destination);
+speechService.on('tts-end', () => {
+  console.log('TTS 播放結束');
+});
+
+speechService.on('tts-error', (error) => {
+  console.error('TTS 錯誤:', error);
+});
+
+// 播放語音
+speechService.speak('你好，我是語音助手', {
+  lang: 'zh-TW',
+  rate: 1.0,
+  pitch: 1.0,
+  volume: 1.0
+});
+
+// === STT（語音轉文字）===
+speechService.on('stt-start', () => {
+  console.log('STT 開始識別');
+});
+
+speechService.on('stt-result', (data) => {
+  console.log('識別結果:', data.transcript);
+  console.log('是否最終結果:', data.isFinal);
+});
+
+speechService.on('stt-end', () => {
+  console.log('STT 結束識別');
+});
+
+// 開始語音識別
+speechService.startRecognition({
+  lang: 'zh-TW',
+  continuous: true,
+  interimResults: true
+});
+
+// 停止語音識別
+speechService.stopRecognition();
+```
+
+## 🌐 測試頁面使用說明
+
+### 本地開發
+```bash
+# 1. 啟動本地伺服器
+python3 -m http.server 8000
+
+# 2. 在瀏覽器開啟
+http://localhost:8000/index.html
+```
+
+### 頁面功能
+
+1. **初始化按鈕**：點擊載入所有模型和服務
+2. **診斷按鈕**：檢查系統狀態和支援功能
+3. **分頁導航**：使用左右箭頭切換不同服務頁面
+
+### 服務頁面
+
+- **Speech API**：Web Speech API 的 TTS/STT 功能
+- **Whisper**：Whisper 模型語音識別
+- **VAD 檢測**：語音活動檢測
+- **喚醒詞**：喚醒詞檢測（Hey Jarvis、Alexa）
+- **倒數計時**：計時器服務測試
+- **音訊工具**：AudioRingBuffer 等工具測試
+
+## 🏗️ 架構設計
+
+### 事件驅動架構 v2
+
+所有服務都繼承自 `EventEmitter`，提供統一的事件處理機制：
+
+```javascript
+class ServiceBase extends EventEmitter {
+  // 服務實現
 }
 ```
 
-## API 參考
+### 服務間通訊
 
-### 註冊表函數
+服務之間透過事件進行解耦通訊：
 
-- `loadRegistry(url)`: 從 JSON 載入模型註冊表
-- `resolveVad(registry)`: 取得 VAD 模型配置
-- `resolveWakeword(registry, id?)`: 取得喚醒詞模型配置
-- `resolveWhisper(registry, id?)`: 取得 Whisper 模型配置
-- `getAvailableModels(registry, type)`: 列出可用模型
+```javascript
+// VAD 服務檢測到語音結束時
+vadService.on('speech-end', () => {
+  // 觸發 Whisper 轉錄
+  whisperService.transcribe(audioBuffer);
+});
 
-### VAD 服務
+// Whisper 完成轉錄時
+whisperService.on('transcription-complete', (data) => {
+  // 使用 TTS 播放回應
+  speechService.speak(generateResponse(data.text));
+});
+```
 
-- `loadVadSession(modelUrl, options?)`: 載入 VAD 模型
-- `createVadState()`: 建立初始 VAD 狀態
-- `processVad(session, state, audio, params)`: 處理音訊進行 VAD
-- `processVadChunks(session, chunks, state, params)`: 處理多個音訊塊
+## 🛠️ 配置管理
 
-### 喚醒詞服務
+使用 `ConfigManager` 集中管理所有配置：
 
-- `loadWakewordResources(wakewordName, config?, customPaths?)`: 載入所有喚醒詞模型
-- `detectWakewordDims(resources, config?)`: 檢測模型維度
-- `createWakewordState(dims)`: 建立初始狀態
-- `processWakewordChunk(resources, state, audio, params, config?)`: 處理音訊
-- `resetWakewordState(dims)`: 檢測後重設狀態
-- `createDefaultWakewordParams(wakewordName, config?)`: 建立預設參數
-
-### Whisper 服務
-
-- `loadWhisperResources(modelPath, options?)`: 載入 Whisper 模型
-- `transcribe(resources, audio, options?)`: 轉錄音訊
-- `transcribeChunks(resources, chunks, options?)`: 轉錄多個音訊塊
-
-### 配置管理
-
-```typescript
-import { ConfigManager } from 'web-asr-core';
-
+```javascript
 const config = new ConfigManager();
 
-// 自訂 VAD 參數
-config.vad.threshold = 0.6;
-config.vad.minSilenceDuration = 1000;
+// 取得 VAD 配置
+const vadConfig = config.getVadConfig();
 
-// 自訂喚醒詞參數
-config.wakeword.hey_jarvis.threshold = 0.5;
-config.wakeword.common.melFramesPerChunk = 5;
+// 取得 Wakeword 配置
+const wakewordConfig = config.getWakewordConfig();
 
-// 自訂 Whisper 參數
-config.whisper.temperature = 0.2;
-config.whisper.maxLength = 448;
+// 取得 Whisper 配置
+const whisperConfig = config.getWhisperConfig();
+
+// 取得 ONNX Runtime 配置
+const onnxConfig = config.getOnnxConfig();
 ```
 
-## 模型配置
+## 🚀 效能優化
 
-模型透過 `global_registry.json` 配置。註冊表定義可用模型及其路徑：
+### WebGPU 加速
 
-```json
-{
-  "version": "1.0.0",
-  "models": [
-    {
-      "id": "silero-vad",
-      "type": "vad",
-      "local_path": "silero_vad.onnx"
-    },
-    {
-      "id": "hey-jarvis",
-      "type": "wakeword",
-      "local_path": "hey_jarvis_v0.1.onnx",
-      "files": {
-        "required": [
-          "melspectrogram.onnx",
-          "embedding_model.onnx"
-        ]
-      }
-    },
-    {
-      "id": "whisper-base",
-      "type": "asr",
-      "local_path": "huggingface/Xenova/whisper-base"
-    }
-  ]
+當瀏覽器支援時，自動啟用 WebGPU 加速：
+
+```javascript
+const config = new ConfigManager();
+config.onnx.webgpu.enabled = true;  // 啟用 WebGPU
+```
+
+### Web Worker
+
+使用 Web Worker 執行模型推理，避免阻塞主執行緒：
+
+```javascript
+config.onnx.useWebWorker = true;  // 啟用 Web Worker
+```
+
+### 模型預載入
+
+預先載入模型以減少首次推理延遲：
+
+```javascript
+// 在應用啟動時載入所有模型
+async function preloadModels() {
+  await vadService.loadModel();
+  await wakewordService.loadModels();
+  await whisperService.loadModel('local', modelPath);
 }
 ```
 
-## 系統需求
+## 📋 瀏覽器相容性
 
-- 支援 WebAssembly 的現代瀏覽器
-- ONNX Runtime Web 用於模型推理
-- transformers.js 用於 Whisper 模型
-- 16kHz 取樣率的音訊輸入
+| 瀏覽器 | 支援度 | 備註 |
+|--------|--------|------|
+| Chrome 90+ | ✅ 完整支援 | 建議使用 |
+| Edge 90+ | ✅ 完整支援 | 建議使用 |
+| Firefox 89+ | ⚠️ 部分支援 | Web Speech API 有限制 |
+| Safari 15+ | ⚠️ 實驗性支援 | 需要啟用實驗功能 |
 
-## 架構設計
+### 必要 API
 
-所有服務遵循無狀態、函數式設計：
+- WebAssembly
+- AudioWorklet（優先）或 ScriptProcessorNode（備用）
+- Web Worker
+- MediaRecorder
+- Web Speech API（選用，用於 TTS/STT）
+- WebGPU（選用，用於加速）
 
-1. **資源（Resources）**：模型會話/管線載入一次並重複使用
-2. **狀態（State）**：由呼叫者維護，在函數呼叫之間傳遞
-3. **處理（Processing）**：純函數 (resources, state, input) → (result, newState)
-4. **無副作用**：沒有全域狀態或內部變更
+## 🔧 開發
 
-## 效能
+### 建構專案
 
-- **VAD**：每 80ms 塊約 5ms
-- **喚醒詞**：每 80ms 塊約 20-30ms
-- **Whisper**：10 秒音訊約 1-3 秒（視模型大小而定）
+```bash
+# 安裝依賴
+npm install
 
-## 瀏覽器相容性
+# TypeScript 編譯
+npm run build
 
-- Chrome/Edge：完全支援（建議使用）
-- Firefox：完全支援
-- Safari：實驗性支援（某些功能可能受限）
+# 建立瀏覽器 bundle
+npm run bundle
 
-## 已知問題與解決方案
+# 完整建構（編譯 + bundle）
+npm run build:all
 
-### 音訊縮放問題
-
-如果遇到喚醒詞在靜音時誤觸發（高分數但低 RMS），通常是音訊縮放問題：
-
-1. **關閉瀏覽器音訊處理**：
-```javascript
-getUserMedia({
-  audio: {
-    echoCancellation: false,
-    noiseSuppression: false,
-    autoGainControl: false
-  }
-})
+# 開發模式（監聽變更）
+npm run dev
 ```
 
-2. **驗證實際設定**：
-```javascript
-const settings = audioTrack.getSettings();
-console.log('音訊設定：', settings);
+### 專案結構
+
+```
+WebASRCore/
+├── src/
+│   ├── services/        # 事件驅動服務
+│   │   ├── VadService.ts
+│   │   ├── WakewordService.ts
+│   │   ├── WhisperService.ts
+│   │   ├── SpeechService.ts
+│   │   └── TimerService.ts
+│   ├── core/           # 核心元件
+│   │   └── EventEmitter.ts
+│   ├── utils/          # 工具類
+│   │   ├── AudioRingBuffer.ts
+│   │   ├── AudioChunker.ts
+│   │   └── config-manager.ts
+│   └── workers/        # Web Worker
+│       └── onnx-inference.worker.ts
+├── dist/               # 編譯輸出
+├── models/            # AI 模型檔案
+└── public/            # 靜態資源
 ```
 
-3. **檢查音訊健康狀態**：
-正常說話時 maxAbs 應該 > 0.01，dBFS 應該在 -40 到 -20 之間。
+## 📄 授權
 
-## 授權
+MIT License
 
-MIT
+## 🤝 貢獻
 
-## 貢獻
+歡迎提交 Issue 和 Pull Request！
 
-歡迎貢獻！請隨時提交問題或拉取請求。
+## 📚 相關資源
 
-## 致謝
-
-- [Silero VAD](https://github.com/snakers4/silero-vad) 提供 VAD 模型
-- [OpenWakeWord](https://github.com/dscripka/openWakeWord) 提供喚醒詞模型
-- [Whisper](https://github.com/openai/whisper) 和 [transformers.js](https://github.com/xenova/transformers.js) 提供語音識別
+- [ONNX Runtime Web](https://github.com/microsoft/onnxruntime)
+- [Transformers.js](https://github.com/xenova/transformers.js)
+- [Silero VAD](https://github.com/snakers4/silero-vad)
+- [OpenWakeWord](https://github.com/dscripka/openWakeWord)

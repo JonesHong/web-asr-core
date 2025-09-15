@@ -57,8 +57,17 @@ declare namespace ort {
   };
 }
 
-// 載入 ONNX Runtime
-importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js');
+// 載入 ONNX Runtime - 優先使用 node_modules，CDN 作為備案
+// Worker 中的路徑是相對於 Worker 檔案位置 (dist/workers/)
+try {
+  // 嘗試從 node_modules 載入 (相對於根目錄)
+  importScripts('../../node_modules/onnxruntime-web/dist/ort.min.js');
+  console.log('[Worker] ONNX Runtime loaded from node_modules');
+} catch (e) {
+  // 如果 node_modules 載入失敗，使用 CDN 作為備案
+  console.log('[Worker] Loading ONNX Runtime from CDN (node_modules not available)');
+  importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js');
+}
 
 interface ModelConfig {
   modelPath: string;
@@ -89,13 +98,54 @@ interface InferenceResponse {
   provider?: string;
 }
 
+/**
+ * Worker 事件橋接器
+ * 
+ * @description 負責將 Worker 內部的事件轉發到主執行緒
+ */
+class WorkerEventBridge {
+  /**
+   * 發送事件到主執行緒
+   */
+  static emitEvent(eventType: string, detail: any): void {
+    self.postMessage({
+      type: 'event',
+      event: eventType,
+      detail: detail,
+      timestamp: Date.now()
+    });
+  }
+  
+  /**
+   * 發送處理錯誤事件
+   */
+  static emitError(error: Error, context: string): void {
+    this.emitEvent('processing-error', {
+      error: {
+        message: error.message,
+        stack: error.stack
+      },
+      context: `worker:${context}`
+    });
+  }
+}
+
 class ONNXInferenceWorker {
   private sessions: Map<string, ort.InferenceSession> = new Map();
   private vadStates: Map<string, Float32Array> = new Map();  // 保存 VAD LSTM 狀態
+  private vadActiveStates: Map<string, boolean> = new Map();  // 保存 VAD 活動狀態
   private isWebGPUAvailable = false;
 
   constructor() {
     this.initialize();
+  }
+
+  private isVadActive(sessionKey: string): boolean {
+    return this.vadActiveStates.get(sessionKey) || false;
+  }
+
+  private setVadActive(sessionKey: string, active: boolean): void {
+    this.vadActiveStates.set(sessionKey, active);
   }
 
   private async initialize() {
@@ -125,8 +175,22 @@ class ONNXInferenceWorker {
       ort.env.webgpu.powerPreference = 'high-performance';
     }
     
-    // 設置 WASM 路徑
-    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
+    // 設置 WASM 路徑 - 優先使用 node_modules
+    // 檢查是否可以使用本地路徑
+    try {
+      // 嘗試檢查本地路徑是否可用
+      const testFetch = await fetch('../../node_modules/onnxruntime-web/dist/ort-wasm.wasm', { method: 'HEAD' });
+      if (testFetch.ok) {
+        ort.env.wasm.wasmPaths = '../../node_modules/onnxruntime-web/dist/';
+        console.log('[ONNX Worker] Using local WASM files from node_modules');
+      } else {
+        throw new Error('Local WASM not available');
+      }
+    } catch (e) {
+      // 使用 CDN 作為備案
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
+      console.log('[ONNX Worker] Using CDN for WASM files');
+    }
 
     self.postMessage({ 
       type: 'initialized', 
@@ -171,10 +235,44 @@ class ONNXInferenceWorker {
     }
 
     try {
-      const session = await ort.InferenceSession.create(
-        config.modelPath,
-        { executionProviders }
-      );
+      // 先嘗試直接載入，如果失敗則使用 ArrayBuffer
+      let session: ort.InferenceSession;
+      
+      // 修正路徑 - Worker 在 /dist/workers/ 下執行，需要調整相對路徑
+      let modelUrl = config.modelPath;
+      
+      // 如果是相對路徑，需要調整為從根目錄開始
+      if (modelUrl.startsWith('models/') || modelUrl.startsWith('./models/')) {
+        // 去掉 ./ 前綴（如果有）
+        modelUrl = modelUrl.replace(/^\.\//, '');
+        // 添加 /../../ 來從 /dist/workers/ 返回到根目錄
+        modelUrl = `/../../${modelUrl}`;
+      }
+      
+      try {
+        // 嘗試直接從路徑載入
+        session = await ort.InferenceSession.create(
+          modelUrl,
+          { executionProviders }
+        );
+      } catch (pathError: any) {
+        // 如果是外部數據文件錯誤，嘗試使用 ArrayBuffer
+        if (pathError.message?.includes('external data file')) {
+          console.log(`[ONNX Worker] Path loading failed, trying ArrayBuffer for ${modelName}`);
+          const response = await fetch(modelUrl);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch model: ${response.status}`);
+          }
+          const modelBuffer = await response.arrayBuffer();
+          // ONNX Runtime accepts ArrayBuffer directly for binary model data
+          session = await ort.InferenceSession.create(
+            modelBuffer as any,  // Type assertion needed as ONNX Runtime types may be incomplete
+            { executionProviders }
+          );
+        } else {
+          throw pathError;
+        }
+      }
       
       this.sessions.set(cacheKey, session);
       console.log(`[ONNX Worker] Model loaded successfully: ${modelName}`);
@@ -198,6 +296,8 @@ class ONNXInferenceWorker {
     
     // 獲取或創建 LSTM 狀態
     let stateData = this.vadStates.get(sessionKey);
+    const wasActive = stateData ? this.isVadActive(sessionKey) : false;
+    
     if (!stateData) {
       stateData = new Float32Array(2 * 1 * 128);  // 零初始化
       this.vadStates.set(sessionKey, stateData);
@@ -238,6 +338,22 @@ class ONNXInferenceWorker {
     const threshold = 0.15;  // 進一步降低閾值
     const isSpeech = probability > threshold;
     
+    // 發出語音狀態變更事件
+    if (!wasActive && isSpeech) {
+      WorkerEventBridge.emitEvent('speech-start', {
+        timestamp: Date.now(),
+        probability: probability
+      });
+    } else if (wasActive && !isSpeech) {
+      WorkerEventBridge.emitEvent('speech-end', {
+        timestamp: Date.now(),
+        probability: probability
+      });
+    }
+    
+    // 保存當前狀態供下次比較
+    this.setVadActive(sessionKey, isSpeech);
+    
     // 總是輸出調試資訊以便觀察
     // console.log(`[ONNX Worker] VAD: probability=${probability.toFixed(4)}, threshold=${threshold}, isSpeech=${isSpeech}, inputLength=${inputData.length}`);
     
@@ -258,12 +374,31 @@ class ONNXInferenceWorker {
 
   private async runWakeWordInference(
     session: ort.InferenceSession,
-    inputData: Float32Array
+    inputData: Float32Array,
+    modelName: string = 'unknown'
   ): Promise<any> {
-    // 喚醒詞模型輸入格式
-    const feeds: Record<string, ort.Tensor> = {
-      'input': new ort.Tensor('float32', inputData, [1, 1, inputData.length])
-    };
+    // 判斷輸入數據的格式
+    // 如果 inputData 長度是 96 的倍數，則可能是 embedding tensor [T, D]
+    // 否則可能是原始音訊數據
+    let feeds: Record<string, ort.Tensor>;
+    
+    const embeddingDim = 96;
+    const isEmbeddingTensor = inputData.length % embeddingDim === 0 && inputData.length >= embeddingDim;
+    
+    if (isEmbeddingTensor) {
+      // 這是 embedding tensor，shape 應該是 [1, T, D]
+      const timeSteps = inputData.length / embeddingDim;
+      console.log(`[ONNX Worker] Detected embedding tensor: T=${timeSteps}, D=${embeddingDim}`);
+      feeds = {
+        'input': new ort.Tensor('float32', inputData, [1, timeSteps, embeddingDim])
+      };
+    } else {
+      // 這是原始音訊數據，shape 應該是 [1, 1, audio_length]
+      console.log(`[ONNX Worker] Detected raw audio tensor: length=${inputData.length}`);
+      feeds = {
+        'input': new ort.Tensor('float32', inputData, [1, 1, inputData.length])
+      };
+    }
 
     const results = await session.run(feeds);
     
@@ -282,8 +417,20 @@ class ONNXInferenceWorker {
       }
     });
     
+    const isDetected = maxScore > 0.5;
+    
+    // 發出喚醒詞檢測事件
+    if (isDetected) {
+      WorkerEventBridge.emitEvent('wakeword-detected', {
+        word: modelName,
+        wordIndex: detectedWord,
+        confidence: maxScore,
+        timestamp: Date.now()
+      });
+    }
+    
     return {
-      detected: maxScore > 0.5,
+      detected: isDetected,
       confidence: maxScore,
       wordIndex: detectedWord
     };
@@ -301,7 +448,7 @@ class ONNXInferenceWorker {
       if (request.type === 'vad') {
         result = await this.runVADInference(session, request.inputData, request.id);
       } else {
-        result = await this.runWakeWordInference(session, request.inputData);
+        result = await this.runWakeWordInference(session, request.inputData, request.modelName);
       }
       
       const executionTime = performance.now() - startTime;
@@ -315,6 +462,10 @@ class ONNXInferenceWorker {
       };
     } catch (error) {
       console.error(`[ONNX Worker] Inference failed for ${request.type}:`, error);
+      
+      // 發出錯誤事件
+      WorkerEventBridge.emitError(error as Error, `processInference-${request.type}`);
+      
       return {
         id: request.id,
         type: request.type,
@@ -333,6 +484,7 @@ class ONNXInferenceWorker {
   public clearCache(): void {
     this.sessions.clear();
     this.vadStates.clear();
+    this.vadActiveStates.clear();
     console.log('[ONNX Worker] Model cache and states cleared');
   }
 }

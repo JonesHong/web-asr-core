@@ -22,16 +22,15 @@ export class AudioRingBuffer {
     private audioWorklet?: AudioWorkletNode;
     
     /**
-     * @param capacity 緩衝區容量（樣本數），預設從 ConfigManager 取得
-     * @param useSharedArrayBuffer 是否使用 SharedArrayBuffer（for Web Worker），預設從 ConfigManager 取得
-     * @param config 可選的配置管理器實例
+     * @param capacity 緩衝區容量（樣本數）
+     * @param useSharedArrayBuffer 是否使用 SharedArrayBuffer（for Web Worker）
      */
     constructor(
         capacity?: number,
-        useSharedArrayBuffer?: boolean,
-        config: ConfigManager = ConfigManager.getInstance()
+        useSharedArrayBuffer?: boolean
     ) {
         // 使用提供的參數或從配置取得預設值
+        const config = ConfigManager.getInstance();
         this.capacity = capacity ?? config.audio.ringBuffer.capacity;
         this.useSharedArrayBuffer = useSharedArrayBuffer ?? config.audio.ringBuffer.useSharedArrayBuffer;
 

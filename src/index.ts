@@ -16,6 +16,45 @@
 // 匯出所有類型定義
 export * from './types';
 
+// ===== Event Architecture v2 匯出 =====
+
+// 匯出基礎 EventEmitter
+export {
+  EventEmitter,
+  createEventEmitter,
+} from './core/EventEmitter';
+
+// 匯出事件驅動服務類別
+export {
+  VadService,
+  type VadEvents,
+  type VadServiceOptions,
+} from './services/VadService';
+
+export {
+  WakewordService,
+  type WakewordEvents,
+  type WakewordServiceOptions,
+} from './services/WakewordService';
+
+export {
+  WhisperService,
+  type WhisperEvents,
+  type WhisperServiceOptions,
+} from './services/WhisperService';
+
+export {
+  TimerService,
+  type TimerEvents,
+} from './services/TimerService';
+
+export {
+  SpeechService,
+  type SpeechEvents,
+} from './services/SpeechService';
+
+// ===== 原有無狀態函數匯出（保持向後相容） =====
+
 // 匯出註冊表函數
 export {
   loadRegistry,
@@ -41,16 +80,17 @@ export {
   ortService,
 } from './services/ort';
 
-// 匯出 VAD 服務
+// 匯出 VAD 服務（無狀態函數）
 export {
   loadVadSession,
   createVadState,
   processVad,
   processVadChunks,
   createDefaultVadParams,
+  vadEvents, // MVP 事件系統（保持向後相容）
 } from './services/vad';
 
-// 匯出喚醒詞服務
+// 匯出喚醒詞服務（無狀態函數）
 export {
   loadWakewordResources,
   detectWakewordDims,
@@ -58,15 +98,17 @@ export {
   processWakewordChunk,
   resetWakewordState,
   createDefaultWakewordParams,
+  wakewordEvents, // MVP 事件系統（保持向後相容）
 } from './services/wakeword';
 
-// 匯出 Whisper 服務
+// 匯出 Whisper 服務（無狀態函數）
 export {
   loadWhisperResources,
   transcribe,
   chunkAudioForTranscription,
   transcribeChunks,
   createDefaultWhisperOptions,
+  whisperEvents, // MVP 事件系統（保持向後相容）
 } from './services/whisper';
 
 // 匯出配置管理器
@@ -92,12 +134,13 @@ export {
   MultiChannelAudioChunker,
 } from './utils/AudioChunker';
 
-// 匯出計時器服務
+// 匯出計時器服務（無狀態函數）
 export {
   Timer,
   TimerManager,
   type TimerState,
   type TimerParams,
+  timerEvents, // MVP 事件系統（保持向後相容）
 } from './services/timer';
 
 // 匯出音訊重採樣服務
@@ -122,6 +165,32 @@ export {
   type AudioDataCallback,
   type CaptureState,
 } from './services/audio-capture';
+
+// 匯出 Speech API 服務（無狀態函數）
+export {
+  loadTTSResources,
+  createTTSState,
+  speak,
+  pauseSpeech,
+  resumeSpeech,
+  stopSpeech,
+  getAvailableVoices,
+  loadSTTResources,
+  createSTTState,
+  startRecognition,
+  stopRecognition,
+  processRecognitionResult,
+  processRecognitionError,
+  checkBrowserSupport,
+  type TTSResources,
+  type TTSState,
+  type TTSParams,
+  type TTSResult,
+  type STTResources,
+  type STTState,
+  type STTParams,
+  type STTResult,
+} from './services/speech';
 
 // 為方便起見重新匯出 onnxruntime-web 類型
 export type { InferenceSession, Tensor } from 'onnxruntime-web';

@@ -15,6 +15,16 @@ import { ConfigManager } from '../utils/config-manager';
 import { ortService } from './ort';
 
 /**
+ * Wake Word 事件發射器
+ * 
+ * @description 用於發送喚醒詞相關事件，外部可以監聽這些事件進行相應處理
+ * 事件類型：
+ * - 'wakeword-detected': 檢測到喚醒詞 { word: string, score: number, timestamp: number }
+ * - 'processing-error': 處理錯誤 { error: Error, context: string }
+ */
+export const wakewordEvents = new EventTarget();
+
+/**
  * 載入所有喚醒詞模型資源
  * 
  * @description 並行載入三個 ONNX 模型：梅爾頻譜圖模型、嵌入模型和檢測器模型
@@ -43,7 +53,8 @@ import { ortService } from './ort';
  * ```
  */
 export async function loadWakewordResources(
-  wakewordName: 'hey_jarvis' | 'hey_mycroft' | 'alexa' = 'hey_jarvis',
+  wakewordName: 'hey_jarvis' | 'hey_mycroft' | 'alexa' | string = 'hey_jarvis',
+  isCustomModel: boolean = false,
   config?: ConfigManager,
   customPaths?: { 
     detectorUrl: string; 
@@ -56,11 +67,33 @@ export async function loadWakewordResources(
   // 初始化 ORT 服務
   await ortService.initialize();
   
-  // 使用自訂路徑或從配置取得
+  // 處理自訂模型
+  if (isCustomModel && typeof wakewordName === 'string') {
+    // 對於自訂模型，假設單一 ONNX 檔案包含所有三個模型
+    // 或使用相同的模型 URL（Blob URL）
+    const modelUrl = wakewordName; // wakewordName 在自訂模型時是 URL
+    
+    // 創建單一模型的資源（簡化版本）
+    const session = await ortService.createSession(modelUrl, undefined, 'wakeword');
+    
+    // 返回簡化的資源（三個階段使用同一個模型）
+    return {
+      detector: session,
+      melspec: session,
+      embedding: session,
+      dims: {
+        embeddingBufferSize: cfg.wakeword.common.embeddingBufferSize,
+        embeddingDimension: cfg.wakeword.common.embeddingDimension
+      }
+    };
+  }
+  
+  // 使用自訂路徑或從配置取得（內建模型）
+  const wakewordKey = wakewordName as 'hey_jarvis' | 'hey_mycroft' | 'alexa';
   const paths = customPaths || {
-    detectorUrl: cfg.wakeword[wakewordName].detectorPath,
-    melspecUrl: cfg.wakeword[wakewordName].melspecPath,
-    embeddingUrl: cfg.wakeword[wakewordName].embeddingPath,
+    detectorUrl: cfg.wakeword[wakewordKey].detectorPath,
+    melspecUrl: cfg.wakeword[wakewordKey].melspecPath,
+    embeddingUrl: cfg.wakeword[wakewordKey].embeddingPath,
   };
   
   // 如果啟用 Web Worker，預載入模型，指定為 wakeword 類型以使用 WASM
@@ -197,15 +230,62 @@ export async function processWakewordChunk(
   resources: WakewordResources,
   prevState: WakewordState,
   audio: Float32Array,
-  params: WakewordParams,
+  params: WakewordParams & { isCustomModel?: boolean },
   config?: ConfigManager
 ): Promise<WakewordResult> {
   const cfg = config || new ConfigManager();
+  
+  try {
+  
+  // 檢查是否為單一 session 的 raw-audio 模型（罕見情況）
+  const singleSessionAllStages = 
+    resources.melspec === resources.detector && 
+    resources.embedding === resources.detector;
+  
+  // 僅在三個資源是同一個 session 時，才視為 raw-audio 單檔模型的 fallback
+  if (params.isCustomModel && singleSessionAllStages) {
+    // 僅嘗試 3D [1,1,N]，如果失敗則回到標準三階段
+    try {
+      const audioTensor = createTensor('float32', audio, [1, 1, audio.length]);
+      const result = await resources.detector.run({
+        [resources.detector.inputNames[0]]: audioTensor
+      });
+      
+      const output = result[resources.detector.outputNames[0]] as Tensor;
+      const scores = output.data as Float32Array;
+      
+      let maxScore = 0;
+      for (let i = 0; i < scores.length; i++) {
+        maxScore = Math.max(maxScore, scores[i]);
+      }
+      
+      const triggered = maxScore >= params.threshold;
+      return {
+        score: maxScore,
+        triggered,
+        state: prevState
+      };
+    } catch (e) {
+      // fallback 失敗，繼續用標準三階段
+      console.warn('[processWakewordChunk] Raw-audio fallback failed, using 3-stage pipeline instead');
+      // 不要拋出錯誤，讓程式繼續執行標準三階段
+    }
+  }
   
   const melFramesPerChunk = params.melFramesPerChunk ?? cfg.wakeword.common.melFramesPerChunk;
   const requiredMelFrames = params.requiredMelFrames ?? cfg.wakeword.common.requiredMelFrames;
   const melStride = params.melStride ?? cfg.wakeword.common.melStride;
   
+  // 驗證狀態結構
+  if (!prevState.melBuffer || !Array.isArray(prevState.melBuffer)) {
+    console.error('[processWakewordChunk] Invalid state - melBuffer is not an array:', prevState);
+    throw new Error('Invalid wakeword state: melBuffer must be an array');
+  }
+  if (!prevState.embeddingBuffer || !Array.isArray(prevState.embeddingBuffer)) {
+    console.error('[processWakewordChunk] Invalid state - embeddingBuffer is not an array:', prevState);
+    throw new Error('Invalid wakeword state: embeddingBuffer must be an array');
+  }
+
   // 深拷貝狀態以避免 ONNX Runtime 記憶體重用問題
   // melBuffer 需要深拷貝每個 Float32Array
   const melBuffer = prevState.melBuffer.map(frame => new Float32Array(frame));
@@ -243,7 +323,24 @@ export async function processWakewordChunk(
     // 為嵌入模型展平梅爾幀
     const flatMel = new Float32Array(requiredMelFrames * melDim);
     for (let i = 0; i < windowFrames.length; i++) {
-      flatMel.set(windowFrames[i], i * melDim);
+      const offset = i * melDim;
+      const frame = windowFrames[i];
+      
+      // 檢查邊界
+      if (offset + frame.length > flatMel.length) {
+        console.error('[processWakewordChunk] Mel offset out of bounds:', {
+          offset,
+          frameLength: frame.length,
+          flatMelLength: flatMel.length,
+          frameIndex: i,
+          requiredMelFrames,
+          melDim,
+          windowFramesLength: windowFrames.length
+        });
+        throw new Error('mel offset is out of bounds');
+      }
+      
+      flatMel.set(frame, offset);
     }
     
     // 創建形狀為 [1, 76, 32, 1] 的張量
@@ -265,7 +362,23 @@ export async function processWakewordChunk(
       resources.dims.embeddingBufferSize * resources.dims.embeddingDimension
     );
     for (let i = 0; i < embeddingBuffer.length; i++) {
-      flatEmb.set(embeddingBuffer[i], i * resources.dims.embeddingDimension);
+      const offset = i * resources.dims.embeddingDimension;
+      const embedding = embeddingBuffer[i];
+      
+      // 檢查邊界
+      if (offset + embedding.length > flatEmb.length) {
+        console.error('[processWakewordChunk] Offset out of bounds:', {
+          offset,
+          embeddingLength: embedding.length,
+          flatEmbLength: flatEmb.length,
+          bufferIndex: i,
+          embeddingBufferSize: resources.dims.embeddingBufferSize,
+          embeddingDimension: resources.dims.embeddingDimension
+        });
+        throw new Error('offset is out of bounds');
+      }
+      
+      flatEmb.set(embedding, offset);
     }
     
     // 為檢測器創建張量
@@ -296,6 +409,15 @@ export async function processWakewordChunk(
   
   if (triggered) {
     console.log(`[Wakeword] TRIGGERED! Score: ${score.toFixed(4)} > ${params.threshold}`);
+    
+    // 發出喚醒詞檢測事件
+    wakewordEvents.dispatchEvent(new CustomEvent('wakeword-detected', {
+      detail: { 
+        word: 'detected', // Word name should be provided by the caller context
+        score: score,
+        timestamp: Date.now()
+      }
+    }));
   }
   
   // 返回檢測結果與更新的狀態
@@ -309,6 +431,17 @@ export async function processWakewordChunk(
     triggered, 
     state 
   };
+  
+  } catch (error) {
+    // 發出處理錯誤事件
+    wakewordEvents.dispatchEvent(new CustomEvent('processing-error', {
+      detail: { 
+        error: error as Error, 
+        context: 'processWakewordChunk' 
+      }
+    }));
+    throw error; // 重新拋出錯誤以保持原有行為
+  }
 }
 
 /**

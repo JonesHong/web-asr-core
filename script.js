@@ -1,18 +1,77 @@
 
+// 等待 ONNX Runtime 載入完成
+async function waitForOrt() {
+    // 檢查 ort 是否已經存在
+    if (typeof ort !== 'undefined') {
+        return;
+    }
+    
+    // 等待最多 5 秒
+    const maxWaitTime = 5000;
+    const checkInterval = 100;
+    const startTime = Date.now();
+    
+    while (typeof ort === 'undefined') {
+        if (Date.now() - startTime > maxWaitTime) {
+            throw new Error('ONNX Runtime 載入超時');
+        }
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+    }
+}
+
+// 等待 ONNX Runtime 載入完成後再導入 WebASRCore
+await waitForOrt();
+console.log('[Script] ONNX Runtime 已準備就緒，載入 WebASRCore...');
+
 // 導入 WebASRCore - 使用動態 import 因為我們在 script module 中
 const WebASRCore = await import('./dist/web-asr-core.bundle.js');
+
+// Whisper 模型狀態管理
+const whisperState = {
+    source: 'local',  // 'local' 或 'remote'
+    localBasePath: '/models/huggingface/',
+    localModelId: 'Xenova/whisper-base',  // 修正為包含 Xenova 路徑
+    remoteModelId: 'Xenova/whisper-tiny',
+    isLoading: false,
+    currentPipeline: null
+};
+
+
+// 本地可用的 Whisper 模型列表
+const AVAILABLE_LOCAL_MODELS = [
+    { id: 'Xenova/whisper-tiny', label: 'Whisper Tiny 多語言 (39MB)', size: '39MB' },
+    { id: 'Xenova/whisper-tiny.en', label: 'Whisper Tiny 英文 (39MB)', size: '39MB' },
+    { id: 'Xenova/whisper-base', label: 'Whisper Base 多語言 (74MB)', size: '74MB' },
+    { id: 'Xenova/whisper-base.en', label: 'Whisper Base 英文 (74MB)', size: '74MB' },
+    { id: 'Xenova/whisper-small', label: 'Whisper Small 多語言 (244MB)', size: '244MB' },
+    { id: 'Xenova/whisper-small.en', label: 'Whisper Small 英文 (244MB)', size: '244MB' },
+    { id: 'Xenova/whisper-medium', label: 'Whisper Medium 多語言 (769MB)', size: '769MB' },
+    { id: 'Xenova/whisper-medium.en', label: 'Whisper Medium 英文 (769MB)', size: '769MB' },
+    { id: 'Xenova/whisper-large', label: 'Whisper Large 多語言 (1550MB)', size: '1550MB' },
+    { id: 'Xenova/whisper-large-v2', label: 'Whisper Large v2 (1550MB)', size: '1550MB' },
+    { id: 'Xenova/whisper-large-v3', label: 'Whisper Large v3 (1550MB)', size: '1550MB' }
+];
 
 // 全域變數
 let audioContext = null;
 let microphone = null;
 let processor = null;
 
-// 模型資源
-let vadSession = null;
+// Event Architecture v2 服務實例
+let vadService = null;
+let wakewordService = null;
+let whisperService = null;
+let timerService = null;
+
+// 非事件驅動類實例
+let audioCapture = null;
+let audioResampler = null;
+let audioChunker = null;
+let audioRingBuffer = null;
+
+// 服務狀態 (Event Architecture v2)
 let vadState = null;
-let wakewordResources = null;
-let wakewordState = null;
-let whisperResources = null;
+let wakewordStates = new Map(); // 每個喚醒詞一個狀態
 
 // 測試狀態
 let vadTesting = false;
@@ -199,24 +258,26 @@ let vadProcessing = false;
 
 // 處理 VAD 音訊塊 (512 samples)
 async function processVadChunk(chunk) {
-    if (vadTesting && vadSession && vadState && !vadProcessing) {
+    // 使用 Event Architecture v2 - 事件驅動處理
+    if (vadTesting && vadService && !vadProcessing) {
         vadProcessing = true;  // 標記處理中
         try {
-            const result = await WebASRCore.processVad(
-                vadSession,
-                vadState,
-                chunk,
-                WebASRCore.DEFAULT_VAD_PARAMS
-            );
-
-            vadState = result.state;
-
-            if (result.detected) {
-                log('vadLog', `語音檢測到！分數: ${result.score.toFixed(3)}`, 'success');
-                drawWaveform('vadCanvas', chunk);
+            // 確保有 VAD 狀態和參數
+            if (!vadState) {
+                vadState = vadService.createState();
             }
+            const vadParams = vadService.createParams();
+            
+            // 處理音訊並更新狀態
+            const result = await vadService.process(vadState, chunk, vadParams);
+            vadState = result.state;  // 更新狀態以供下次使用
+            
+            // 視覺化波形（可選）
+            drawWaveform('vadCanvas', chunk);
+            
+            // UI 更新已通過事件自動觸發，無需手動處理
         } catch (error) {
-            log('vadLog', `VAD 錯誤: ${error.message}`, 'error');
+            log('vadLog', `VAD 處理錯誤: ${error.message}`, 'error');
         } finally {
             vadProcessing = false;  // 處理完成
         }
@@ -259,30 +320,63 @@ let wwRuntime = {
 
 // 處理喚醒詞音訊塊 (1280 samples)
 async function processWakewordChunk(chunk) {
-    if (wakewordTesting && wakewordResources && wakewordState && !wakewordProcessing) {
+    if (wakewordTesting && wakewordService && !wakewordProcessing) {
         wakewordProcessing = true;  // 標記處理中
         
         const wakewordName = document.getElementById('wakewordSelect').value;
-        const cfg = WAKEWORD_CONFIG[wakewordName] || { 
-            threshold: 0.5, 
+        
+        // 處理自訂模型
+        const actualName = wakewordName === 'custom' ? customWakewordModel?.name : wakewordName;
+        if (!actualName) {
+            wakewordProcessing = false;
+            return;
+        }
+        
+        // 檢查是否在冷卻期內
+        if (window.wakewordCooldown && window.wakewordCooldown[actualName]) {
+            wakewordProcessing = false;
+            return;  // 在冷卻期內，跳過處理
+        }
+        
+        // 優先從 wakewordService.options.thresholds 讀取自訂閾值
+        const serviceThreshold = wakewordService?.options?.thresholds?.[actualName];
+        const cfg = WAKEWORD_CONFIG[actualName] || WAKEWORD_CONFIG[wakewordName] || { 
+            threshold: serviceThreshold || 0.5,  // 使用服務中設定的閾值，或預設 0.5
             minConsecutive: 2, 
             refractoryMs: 1500,
             useVad: true 
         };
         
+        // 如果服務中有自訂閾值，覆蓋 cfg 的閾值
+        if (serviceThreshold !== undefined) {
+            cfg.threshold = serviceThreshold;
+        }
+        
         let triggered = false;
         let score = 0;
         
         try {
-            // 根據參考文章：喚醒詞管線要連續跑，不要被 VAD 節流
-            const result = await WebASRCore.processWakewordChunk(
-                wakewordResources,
-                wakewordState,
+            // 取得或創建該喚醒詞的狀態（使用實際名稱）
+            if (!wakewordStates.has(actualName)) {
+                const newState = wakewordService.createState(actualName);  // 傳遞名稱以使用正確的維度
+                console.log(`[processWakewordChunk] 創建新狀態 for ${actualName}:`, newState);
+                wakewordStates.set(actualName, newState);
+            }
+            let currentState = wakewordStates.get(actualName);
+            
+            const wakewordParams = wakewordService.createParams(actualName, {
+                threshold: cfg.threshold
+            });
+            
+            // 使用 Event Architecture v2 處理
+            const result = await wakewordService.process(
+                currentState,
                 chunk,
-                { threshold: cfg.threshold }  // 使用模型特定的閾值
+                wakewordParams
             );
 
-            wakewordState = result.state;
+            // 更新狀態（使用實際名稱）
+            wakewordStates.set(actualName, result.state);
             score = result.score;
             
             // 在與模型相同的 buffer 上計算音訊統計
@@ -363,9 +457,28 @@ async function processWakewordChunk(chunk) {
                     wwRuntime.lastTriggerAt = now;
                     wwRuntime.consecutiveFrames = 0;  // 觸發後重置
                     
-                    // 重置喚醒詞狀態 - 完全重新創建以清空所有緩衝區
-                    const dims = WebASRCore.detectWakewordDims(wakewordResources);
-                    wakewordState = WebASRCore.createWakewordState(dims);
+                    // 重置該喚醒詞的狀態 - 完全重新創建以清空所有緩衝區
+                    const freshState = wakewordService.createState(actualName);  // 傳遞名稱以使用正確的維度
+                    wakewordStates.set(actualName, freshState);  // 使用 actualName 而非 wakewordName
+                    
+                    // 對於 KMU 模型，增加一個額外的冷卻期來防止連續觸發
+                    if (actualName.includes('kmu')) {
+                        // 暫時禁用檢測 1000ms（增加冷卻時間）
+                        const tempName = actualName;
+                        wakewordStates.delete(tempName);
+                        
+                        // 設定一個標誌來阻止處理
+                        if (!window.wakewordCooldown) {
+                            window.wakewordCooldown = {};
+                        }
+                        window.wakewordCooldown[tempName] = true;
+                        
+                        setTimeout(() => {
+                            const newState = wakewordService.createState(tempName);
+                            wakewordStates.set(tempName, newState);
+                            delete window.wakewordCooldown[tempName];
+                        }, 1000);  // 增加到 1 秒冷卻期
+                    }
                 }
             }
             
@@ -381,8 +494,9 @@ async function processWakewordChunk(chunk) {
                 );
             }
             
+            // 舊的檢測邏輯已移除 - 現在由 WakewordService 的 wakewordDetected 事件處理
             if (triggered) {
-                log('wakewordLog', `喚醒詞檢測到！"${wakewordName}" 分數: ${score.toFixed(3)}`, 'success');
+                // 只繪製波形，不再輸出日誌（避免重複）
                 drawWaveform('wakewordCanvas', chunk);
             }
         } catch (error) {
@@ -417,6 +531,290 @@ function updateStatus(elementId, text, type = 'normal') {
     } else {
         element.className = `${baseClasses} border-gray-400`;
     }
+}
+
+// 載入本地模型列表
+function loadLocalModelsList() {
+    const select = document.getElementById('whisperLocalModel');
+    select.innerHTML = '';
+
+    AVAILABLE_LOCAL_MODELS.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = `${model.label}`;
+        if (model.id === whisperState.localModelId) {
+            option.selected = true;
+        }
+        select.appendChild(option);
+    });
+
+    log('whisperLog', `載入 ${AVAILABLE_LOCAL_MODELS.length} 個本地模型選項`, 'info');
+}
+
+// 載入 Whisper 模型
+async function loadWhisperModel(source, modelId) {
+    if (whisperState.isLoading) {
+        log('whisperLog', '模型正在載入中，請稍候...', 'warning');
+        return;
+    }
+
+    whisperState.isLoading = true;
+    updateStatus('whisperStatus', '正在載入模型...', 'active');
+
+    // 顯示進度條
+    document.getElementById('whisperLoadProgress').classList.remove('hidden');
+    document.getElementById('whisperApplyModel').disabled = true;
+    document.getElementById('whisperCancelLoad').classList.remove('hidden');
+
+    try {
+        // 配置 transformers.js 環境
+        if (window.transformers) {
+            const { env } = window.transformers;
+
+            // 根據 source 參數決定使用本地還是遠端模式
+            if (source === 'local') {
+                // 本地模式設定
+                env.allowLocalModels = true;
+                env.localModelPath = './models/';  // 本地模型路徑
+                env.allowRemoteModels = false;
+                log('whisperLog', '配置為本地模型載入模式', 'info');
+                log('whisperLog', `本地路徑: ${env.localModelPath}`, 'info');
+            } else {
+                // 遠端模式設定
+                env.allowLocalModels = false;
+                env.remoteHost = 'https://huggingface.co';
+                env.remotePathTemplate = '{model}/resolve/{revision}/';
+                env.allowRemoteModels = true;
+                log('whisperLog', '配置為遠端模型下載模式', 'info');
+            }
+
+            log('whisperLog', `遠端主機: ${env.remoteHost}`, 'info');
+            log('whisperLog', `路徑模板: ${env.remotePathTemplate}`, 'info');
+            log('whisperLog', `allowLocalModels: ${env.allowLocalModels}`, 'info');
+            log('whisperLog', `allowRemoteModels: ${env.allowRemoteModels}`, 'info');
+
+            // 設定 WASM 路徑
+            env.backends = env.backends || {};
+            env.backends.onnx = env.backends.onnx || {};
+            env.backends.onnx.wasm = env.backends.onnx.wasm || {};
+
+            // 使用對映表指定 WASM 檔案路徑
+            // 優先使用本地 public/ort 目錄的檔案
+            try {
+                const testResponse = await fetch('./public/ort/ort-wasm-simd-threaded.jsep.wasm', { method: 'HEAD' });
+                if (testResponse.ok) {
+                    // 使用物件對映方式指定每個檔案的路徑
+                    env.backends.onnx.wasm.wasmPaths = {
+                        'ort-wasm-simd-threaded.jsep.mjs':  './public/ort/ort-wasm-simd-threaded.jsep.mjs',
+                        'ort-wasm-simd-threaded.jsep.wasm': './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+
+                        // 兼容舊檔名探測
+                        'ort-wasm.wasm':                    './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                        'ort-wasm-simd.wasm':               './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                        'ort-wasm-simd-threaded.wasm':      './public/ort/ort-wasm-simd-threaded.wasm'
+                    };
+                    log('whisperLog', 'WASM 路徑已設定 (使用本地 public/ort)', 'info');
+                } else {
+                    throw new Error('Local WASM files not available in public/ort');
+                }
+            } catch (e) {
+                // 使用 CDN 作為備案
+                env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/';
+                log('whisperLog', 'WASM 路徑已設定 (使用 CDN)', 'info');
+            }
+        }
+
+        // 構建模型路徑
+        const fullModelPath = source === 'local'
+            ? modelId  // 本地模型只需要 ID
+            : modelId; // 遠端模型使用完整 HuggingFace ID
+
+        log('whisperLog', `開始載入模型: ${fullModelPath} (${source})`, 'info');
+
+        // 初始化 WhisperService - 直接載入模型，不做額外檢查
+        // 先嘗試 WASM，如果 WebGPU 有問題
+        const useWebGPU = false; // 暫時停用 WebGPU，因為可能有相容性問題
+        await whisperService.initialize(
+            fullModelPath,
+            {
+                quantized: true,
+                device: useWebGPU && navigator.gpu ? 'webgpu' : 'wasm',
+                dtype: useWebGPU && navigator.gpu ? 'fp16' : 'q8',
+                progress_callback: (data) => {
+                    if (data?.status === 'downloading') {
+                        const percent = data.total ? Math.round((data.loaded / data.total) * 100) : 0;
+                        document.getElementById('whisperProgressBar').style.width = `${percent}%`;
+                        log('whisperLog', `下載進度: ${percent}%`, 'info');
+                    } else if (data?.status) {
+                        log('whisperLog', `狀態: ${data.status}`, 'info');
+                    } else if (data?.progress) {
+                        const percent = Math.round(data.progress);
+                        document.getElementById('whisperProgressBar').style.width = `${percent}%`;
+                        log('whisperLog', `載入進度: ${percent}%`, 'info');
+                    }
+                }
+            }
+        );
+
+        // 更新狀態
+        whisperState.source = source;
+        if (source === 'local') {
+            whisperState.localModelId = modelId;
+        } else {
+            whisperState.remoteModelId = modelId;
+        }
+
+        // 儲存設定到 localStorage
+        localStorage.setItem('whisperSettings', JSON.stringify({
+            source: whisperState.source,
+            localModelId: whisperState.localModelId,
+            remoteModelId: whisperState.remoteModelId
+        }));
+
+        log('whisperLog', `模型載入成功: ${fullModelPath}`, 'success');
+        updateStatus('whisperStatus', '模型已載入，準備就緒');
+
+    } catch (error) {
+        log('whisperLog', `模型載入失敗: ${error.message}`, 'error');
+        updateStatus('whisperStatus', '模型載入失敗', 'error');
+
+        // 提供錯誤處理建議
+        if (error.message.includes('404') || error.message.includes('not found')) {
+            const message = source === 'local'
+                ? '找不到本地模型，請確認模型檔案是否存在於指定路徑'
+                : '找不到遠端模型，請確認 HuggingFace 模型 ID 是否正確';
+            log('whisperLog', message, 'warning');
+        } else if (error.message.includes('CORS')) {
+            log('whisperLog', 'CORS 錯誤：請確認伺服器設定允許跨域請求', 'warning');
+        } else if (error.message.includes('network')) {
+            log('whisperLog', '網路錯誤：請檢查網路連線', 'warning');
+        }
+
+    } finally {
+        whisperState.isLoading = false;
+        document.getElementById('whisperLoadProgress').classList.add('hidden');
+        document.getElementById('whisperProgressBar').style.width = '0%';
+        document.getElementById('whisperApplyModel').disabled = false;
+        document.getElementById('whisperCancelLoad').classList.add('hidden');
+    }
+}
+
+// 初始化 Whisper UI 事件
+function initWhisperUI() {
+    // 載入本地模型列表
+    loadLocalModelsList();
+
+    // 從 localStorage 載入設定
+    const savedSettings = localStorage.getItem('whisperSettings');
+    if (savedSettings) {
+        try {
+            const settings = JSON.parse(savedSettings);
+            whisperState.source = settings.source || 'local';
+            whisperState.localModelId = settings.localModelId || 'Xenova/whisper-base';
+            whisperState.remoteModelId = settings.remoteModelId || 'Xenova/whisper-tiny';
+
+            // 更新 UI
+            document.querySelector(`input[name="whisperSource"][value="${whisperState.source}"]`).checked = true;
+            document.getElementById('whisperLocalModel').value = whisperState.localModelId;
+            document.getElementById('whisperRemoteModel').value = whisperState.remoteModelId;
+        } catch (e) {
+            console.error('無法載入儲存的設定:', e);
+        }
+    }
+
+    // 顯示正確的設定區域
+    document.getElementById('whisperLocalSettings').classList.toggle('hidden', whisperState.source !== 'local');
+    document.getElementById('whisperRemoteSettings').classList.toggle('hidden', whisperState.source === 'local');
+
+    // 模型來源切換
+    document.querySelectorAll('input[name="whisperSource"]').forEach(radio => {
+        radio.addEventListener('change', (e) => {
+            const source = e.target.value;
+            document.getElementById('whisperLocalSettings').classList.toggle('hidden', source !== 'local');
+            document.getElementById('whisperRemoteSettings').classList.toggle('hidden', source === 'local');
+            log('whisperLog', `切換到${source === 'local' ? '本地' : '遠端'}模型模式`, 'info');
+        });
+    });
+
+    // 重新整理本地模型列表
+    document.getElementById('whisperRefreshLocal').addEventListener('click', () => {
+        loadLocalModelsList();
+    });
+
+    // 套用模型按鈕
+    document.getElementById('whisperApplyModel').addEventListener('click', async () => {
+        const source = document.querySelector('input[name="whisperSource"]:checked').value;
+        let modelId;
+
+        if (source === 'local') {
+            modelId = document.getElementById('whisperLocalModel').value;
+            if (!modelId) {
+                log('whisperLog', '請選擇本地模型', 'warning');
+                return;
+            }
+        } else {
+            modelId = document.getElementById('whisperRemoteModel').value.trim();
+            if (!modelId) {
+                log('whisperLog', '請輸入 HuggingFace 模型 ID', 'warning');
+                return;
+            }
+        }
+
+        await loadWhisperModel(source, modelId);
+    });
+
+    // 取消載入按鈕
+    document.getElementById('whisperCancelLoad').addEventListener('click', () => {
+        log('whisperLog', '使用者取消載入', 'info');
+        // 注意：transformers.js 可能不支援真正的取消，這裡只是 UI 層面的取消
+        whisperState.isLoading = false;
+        document.getElementById('whisperLoadProgress').classList.add('hidden');
+        document.getElementById('whisperProgressBar').style.width = '0%';
+        document.getElementById('whisperApplyModel').disabled = false;
+        document.getElementById('whisperCancelLoad').classList.add('hidden');
+        updateStatus('whisperStatus', '載入已取消');
+    });
+
+    // 更新本地模型選擇
+    document.getElementById('whisperLocalModel').addEventListener('change', (e) => {
+        whisperState.localModelId = e.target.value;
+    });
+
+    // 更新遠端模型 ID
+    document.getElementById('whisperRemoteModel').addEventListener('input', async (e) => {
+        whisperState.remoteModelId = e.target.value;
+
+        const indicator = document.getElementById('whisperCompatibilityIndicator');
+        const message = document.getElementById('whisperCompatibilityMessage');
+        const suggestedModels = document.getElementById('whisperSuggestedModels');
+
+        // 如果輸入為空，清除指示器
+        if (!e.target.value.trim()) {
+            indicator.innerHTML = '';
+            message.textContent = '將從 HuggingFace 下載並快取於瀏覽器';
+            message.className = 'text-xs mt-1 block text-gray-500';
+            suggestedModels.classList.add('hidden');
+            return;
+        }
+
+        // 直接顯示準備載入狀態（不檢查相容性）
+        indicator.innerHTML = '<i class="fas fa-info-circle text-blue-500"></i>';
+        message.textContent = '準備載入模型';
+        message.className = 'text-xs mt-1 block text-blue-600';
+        suggestedModels.classList.add('hidden');
+    });
+
+    // 建議模型點擊事件
+    document.querySelectorAll('#whisperSuggestedModels button[data-model]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const modelId = e.target.getAttribute('data-model');
+            document.getElementById('whisperRemoteModel').value = modelId;
+            whisperState.remoteModelId = modelId;
+
+            // 觸發 input 事件以更新相容性指示器
+            document.getElementById('whisperRemoteModel').dispatchEvent(new Event('input'));
+        });
+    });
 }
 
 // 音訊健康檢查函數
@@ -465,28 +863,28 @@ document.getElementById('initBtn').addEventListener('click', async () => {
     status.textContent = '正在載入模型...';
 
     try {
-        // 硬編碼模型路徑配置 - 使用從根目錄開始的路徑
+        // 硬編碼模型路徑配置 - 使用相對路徑
         const MODEL_PATHS = {
             vad: {
-                modelUrl: '/models/github/snakers4/silero-vad/silero_vad_v6.onnx'
+                modelUrl: 'models/github/snakers4/silero-vad/silero_vad_v6.onnx'
             },
             wakeword: {
                 'hey-jarvis': {
-                    detectorUrl: '/models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
-                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: 'models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
+                    melspecUrl: 'models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: 'models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 },
                 'hey-mycroft': {
-                    detectorUrl: '/models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
-                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: 'models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
+                    melspecUrl: 'models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: 'models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 },
                 'alexa': {
-                    detectorUrl: '/models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
-                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: 'models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
+                    melspecUrl: 'models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: 'models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 }
             },
@@ -497,57 +895,204 @@ document.getElementById('initBtn').addEventListener('click', async () => {
             }
         };
 
-        // 載入 VAD
-        log('vadLog', '載入 VAD 模型...', 'info');
-        vadSession = await WebASRCore.loadVadSession(MODEL_PATHS.vad.modelUrl);
-        vadState = WebASRCore.createVadState();
-        log('vadLog', 'VAD 模型載入成功', 'success');
-
-        // 載入喚醒詞
-        const wakewordId = document.getElementById('wakewordSelect').value;
-        log('wakewordLog', `載入 ${wakewordId} 喚醒詞模型...`, 'info');
-        const wwPaths = MODEL_PATHS.wakeword[wakewordId];
+        // 載入 VAD - 使用 Event Architecture v2
+        log('vadLog', '初始化 VAD 服務...', 'info');
         
-        // 創建配置管理器並設定路徑
-        const config = new WebASRCore.ConfigManager();
-        const wakewordName = wakewordId.replace('-', '_'); // hey-jarvis -> hey_jarvis
-        config.wakeword[wakewordName].detectorPath = wwPaths.detectorUrl;
-        config.wakeword[wakewordName].melspecPath = wwPaths.melspecUrl;
-        config.wakeword[wakewordName].embeddingPath = wwPaths.embeddingUrl;
+        // 創建 VadService 實例
+        vadService = new WebASRCore.VadService({
+            threshold: parseFloat(document.getElementById('vadThreshold')?.value || '0.5'),
+            windowSize: 2048,
+            minSpeechFrames: 5,
+            speechEndFrames: 20
+        });
         
-        // 使用新的 API
-        wakewordResources = await WebASRCore.loadWakewordResources(wakewordName, config);
-        const dims = WebASRCore.detectWakewordDims(wakewordResources);
-        wakewordState = WebASRCore.createWakewordState(dims);
-        log('wakewordLog', '喚醒詞模型載入成功', 'success');
-
-        // 載入 Whisper (使用本地模型)
-        log('whisperLog', '載入 Whisper 模型 (本地)...', 'info');
+        // 設置 VAD 事件監聽器
+        vadService.on('speechStart', (event) => {
+            document.getElementById('vadStatus').textContent = 'Speaking';
+            document.getElementById('vadStatus').className = 'text-green-600 font-bold';
+            log('vadLog', `語音開始 (時間: ${new Date(event.timestamp).toLocaleTimeString()})`, 'success');
+        });
         
-        // 確保 transformers.js 已經載入並配置
-        if (window.transformers) {
-            const { env } = window.transformers;
-            // 設定本地模型路徑 - 重要：這裡設定基礎路徑
-            env.localModelPath = '/models/huggingface/';
-            env.allowLocalModels = true;
-            env.allowRemoteModels = false;
-            // 設定 WASM 路徑
-            env.backends = env.backends || {};
-            env.backends.onnx = env.backends.onnx || {};
-            env.backends.onnx.wasm = env.backends.onnx.wasm || {};
-            env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/';
-            log('whisperLog', 'Transformers.js 環境已配置', 'info');
-        }
+        vadService.on('speechEnd', (event) => {
+            document.getElementById('vadStatus').textContent = 'Silence';
+            document.getElementById('vadStatus').className = 'text-gray-600';
+            log('vadLog', `語音結束 (持續: ${(event.duration / 1000).toFixed(2)}秒)`, 'info');
+        });
         
-        // 使用模型 ID，會自動從 localModelPath + modelId 載入
-        whisperResources = await WebASRCore.loadWhisperResources(
-            MODEL_PATHS.whisper.path,  // 'Xenova/whisper-base'
-            { 
-                quantized: MODEL_PATHS.whisper.quantized,
-                localBasePath: '/models/huggingface/'  // 本地模型基礎路徑
+        vadService.on('vadResult', (event) => {
+            // 更新 VAD 分數顯示
+            const scoreEl = document.getElementById('vadScore');
+            if (scoreEl) {
+                scoreEl.textContent = event.score.toFixed(4);
             }
-        );
-        log('whisperLog', 'Whisper 模型載入成功', 'success');
+            
+            // 更新視覺化（如果有的話）
+            if (event.isSpeech) {
+                const canvas = document.getElementById('vadCanvas');
+                if (canvas) {
+                    canvas.style.borderColor = '#10b981'; // 綠色邊框表示語音
+                }
+            }
+        });
+        
+        vadService.on('statistics', (event) => {
+            // 更新統計信息
+            const statsEl = document.getElementById('vadStats');
+            if (statsEl) {
+                statsEl.innerHTML = `
+                    <div>總檢測次數: ${event.totalDetections}</div>
+                    <div>平均處理時間: ${event.averageProcessingTime.toFixed(2)}ms</div>
+                    <div>語音片段數: ${event.speechSegments}</div>
+                `;
+            }
+        });
+        
+        vadService.on('error', (event) => {
+            log('vadLog', `VAD 錯誤: ${event.error.message}`, 'error');
+            console.error('VAD Error:', event.error);
+        });
+        
+        // 初始化服務 - 傳入正確的模型路徑
+        await vadService.initialize(MODEL_PATHS.vad.modelUrl);
+        log('vadLog', 'VAD 服務初始化成功', 'success');
+        
+        // 創建初始 VAD 狀態
+        vadState = vadService.createState();
+
+        // 載入喚醒詞 - 使用 Event Architecture v2
+        const wakewordId = document.getElementById('wakewordSelect').value;
+        log('wakewordLog', `初始化 ${wakewordId} 喚醒詞服務...`, 'info');
+        
+        // 創建 WakewordService 實例
+        wakewordService = new WebASRCore.WakewordService({
+            thresholds: {
+                'hey_jarvis': 0.6,
+                'hey_mycroft': 0.5,
+                'alexa': 0.5,
+                'ok_google': 0.5
+            },
+            resetOnDetection: true
+        });
+        
+        // 設置喚醒詞事件監聽器
+        wakewordService.on('wakewordDetected', (event) => {
+            const detectionSound = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBQ==');
+            detectionSound.play();
+            
+            log('wakewordLog', `🎯 喚醒詞檢測到: ${event.word} (分數: ${event.score.toFixed(3)})`, 'success');
+            
+            // 高亮顯示檢測結果
+            const statusEl = document.getElementById('wakewordStatus');
+            if (statusEl) {
+                statusEl.textContent = `檢測到: ${event.word}`;
+                statusEl.className = 'text-green-600 font-bold text-xl';
+                setTimeout(() => {
+                    statusEl.textContent = '監聽中...';
+                    statusEl.className = 'text-gray-600';
+                }, 2000);
+            }
+        });
+        
+        wakewordService.on('process', (event) => {
+            // 更新檢測進度（每次處理音訊塊時觸發）
+            const scoreEl = document.getElementById('wakewordScore');
+            if (scoreEl && event.maxScore) {
+                scoreEl.textContent = event.maxScore.toFixed(4);
+            }
+        });
+        
+        wakewordService.on('error', (event) => {
+            log('wakewordLog', `喚醒詞錯誤: ${event.error.message}`, 'error');
+            console.error('Wakeword Error:', event.error);
+        });
+        
+        // 初始化服務 - 需要傳入陣列，使用原始 ID 格式
+        await wakewordService.initialize([wakewordId]);
+        log('wakewordLog', '喚醒詞服務初始化成功', 'success');
+        
+        // 清空並重新初始化所有喚醒詞狀態
+        wakewordStates.clear();
+
+        // 載入 Whisper - Event Architecture v2
+        log('whisperLog', '初始化 WhisperService...', 'info');
+
+        // 創建 WhisperService 實例
+        whisperService = new WebASRCore.WhisperService({
+            language: 'zh',
+            temperature: 0.8,
+            maxLength: 500,
+            minAudioLength: 500  // 最小 500ms
+        });
+
+        // 設置 Whisper 事件監聽器
+        whisperService.on('ready', (event) => {
+            log('whisperLog', `WhisperService 已就緒 - 模型: ${event.modelId}`, 'success');
+            updateStatus('whisperStatus', '準備就緒');
+            // 啟用錄音按鈕
+            document.getElementById('whisperRecordBtn').disabled = false;
+        });
+
+        whisperService.on('transcriptionStart', (event) => {
+            log('whisperLog', `開始轉錄 - 音訊長度: ${(event.audioLength / 16000).toFixed(2)}秒`, 'info');
+            updateStatus('whisperStatus', '正在轉錄...', 'active');
+        });
+
+        whisperService.on('transcriptionComplete', (event) => {
+            log('whisperLog', `轉錄完成: "${event.text}" (耗時 ${event.duration}ms)`, 'success');
+
+            // 顯示分段結果（如果有）
+            if (event.segments && event.segments.length > 0) {
+                event.segments.forEach(segment => {
+                    log('whisperLog', `[${segment.start?.toFixed(1) || '0.0'}-${segment.end?.toFixed(1) || '0.0'}]: ${segment.text}`, 'info');
+                });
+            }
+
+            updateStatus('whisperStatus', '轉錄完成');
+        });
+
+        whisperService.on('transcriptionProgress', (event) => {
+            log('whisperLog', `轉錄進度: ${event.progress}%`, 'info');
+            if (event.partialText) {
+                log('whisperLog', `部分結果: "${event.partialText}"`, 'info');
+            }
+        });
+
+        whisperService.on('error', (event) => {
+            log('whisperLog', `錯誤: ${event.error.message} (${event.context})`, 'error');
+            updateStatus('whisperStatus', '發生錯誤', 'error');
+        });
+
+        whisperService.on('statistics', (event) => {
+            log('whisperLog', `統計 - 總轉錄數: ${event.totalTranscriptions}, 平均時間: ${event.averageTranscriptionTime.toFixed(0)}ms`, 'info');
+        });
+
+        // 串流事件處理
+        whisperService.on('streamChunkStart', (event) => {
+            log('whisperLog', '[串流] 開始處理音訊塊', 'info');
+        });
+
+        whisperService.on('streamPartial', (event) => {
+            log('whisperLog', `[串流] 部分結果: "${event.partial}"`, 'info');
+            if (event.committed) {
+                log('whisperLog', `[串流] 已確認: "${event.committed}"`, 'success');
+            }
+        });
+
+        whisperService.on('streamChunkEnd', (event) => {
+            log('whisperLog', `[串流] 音訊塊處理完成: "${event.committed}"`, 'success');
+        });
+
+        whisperService.on('streamFinalize', (event) => {
+            log('whisperLog', `[串流] 最終結果: "${event.text}"`, 'success');
+        });
+
+        // 初始化 Whisper UI 事件處理
+        initWhisperUI();
+
+        // 使用預設設定初始化 (先使用本地模型)
+        await loadWhisperModel('local', 'Xenova/whisper-base');
+
+        log('whisperLog', 'WhisperService 初始化成功', 'success');
 
         // 初始化音訊
         if (await initAudio()) {
@@ -616,9 +1161,211 @@ document.getElementById('vadStopBtn').addEventListener('click', () => {
     log('vadLog', '停止 VAD 測試', 'warning');
 });
 
+// 儲存自訂模型資訊
+let customWakewordModel = null;
+
+// 初始化 WakewordService（如果尚未初始化）
+async function initializeWakewordService() {
+    if (wakewordService) {
+        return; // 已經初始化
+    }
+    
+    try {
+        const { WakewordService } = WebASRCore;
+        
+        // 創建 WakewordService 實例
+        wakewordService = new WakewordService({
+            thresholds: {
+                'hey_jarvis': 0.6,
+                'hey_mycroft': 0.5,
+                'alexa': 0.5,
+                'ok_google': 0.5
+            },
+            resetOnDetection: true
+        });
+        
+        // 設置喚醒詞事件監聽器
+        wakewordService.on('wakewordDetected', ({ word, score }) => {
+            const detectionSound = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBQ==');
+            detectionSound.play();
+            log('wakewordLog', `🎯 喚醒詞檢測到: ${word} (分數: ${score.toFixed(3)})`, 'success');
+            updateStatus('wakewordStatus', `檢測到 "${word}"！分數: ${score.toFixed(3)}`, 'success');
+        });
+        
+        wakewordService.on('process', ({ word, maxScore }) => {
+            // 可選：顯示即時分數
+            if (maxScore > 0.3) {
+                console.log(`[Wakeword] ${word}: ${maxScore.toFixed(3)}`);
+            }
+        });
+        
+        wakewordService.on('error', ({ error, context }) => {
+            log('wakewordLog', `❌ 錯誤 [${context}]: ${error.message}`, 'error');
+            
+            // 嘗試從錯誤訊息中分析並自動修正
+            if (error.message.includes('Invalid rank for input')) {
+                handleCustomModelDimensionError(error.message);
+            }
+        });
+        
+        log('wakewordLog', 'WakewordService 初始化成功', 'success');
+        return wakewordService;
+    } catch (error) {
+        console.error('初始化 WakewordService 失敗:', error);
+        log('wakewordLog', `❌ 初始化失敗: ${error.message}`, 'error');
+        throw error;
+    }
+}
+
+// 處理自訂模型維度錯誤
+function handleCustomModelDimensionError(errorMessage) {
+    // 解析錯誤訊息：Got: 2 Expected: 3
+    const match = errorMessage.match(/Got: (\d+) Expected: (\d+)/);
+    if (match) {
+        const got = parseInt(match[1]);
+        const expected = parseInt(match[2]);
+        
+        log('wakewordLog', `⚠️ 模型輸入維度不匹配：收到 ${got}D，期望 ${expected}D`, 'warning');
+        log('wakewordLog', `💡 嘗試調整輸入格式...`, 'info');
+        
+        // 儲存維度資訊供後續處理使用
+        if (customWakewordModel) {
+            customWakewordModel.expectedDimensions = expected;
+            customWakewordModel.receivedDimensions = got;
+        }
+    }
+}
+
+// 自訂模型上傳處理
+document.getElementById('uploadWakewordBtn').addEventListener('click', () => {
+    document.getElementById('customWakewordInput').click();
+});
+
+document.getElementById('customWakewordInput').addEventListener('change', async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    if (!file.name.endsWith('.onnx')) {
+        log('wakewordLog', '❌ 請選擇 .onnx 模型檔案', 'error');
+        return;
+    }
+    
+    try {
+        // 讀取檔案為 ArrayBuffer
+        const arrayBuffer = await file.arrayBuffer();
+        
+        // 儲存自訂模型資訊
+        customWakewordModel = {
+            name: file.name.replace('.onnx', ''),
+            arrayBuffer: arrayBuffer,
+            file: file
+        };
+        
+        // 更新 UI
+        document.getElementById('customModelInfo').classList.remove('hidden');
+        document.getElementById('customModelName').textContent = `檔案: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+        document.getElementById('wakewordSelect').value = 'custom';
+        
+        log('wakewordLog', `✅ 已載入自訂模型: ${file.name}`, 'success');
+        updateStatus('wakewordStatus', `自訂模型 "${customWakewordModel.name}" 已就緒`, 'success');
+        
+        // 如果 WakewordService 已初始化，預載模型
+        if (wakewordService) {
+            await preloadCustomWakewordModel();
+            // 啟用開始按鈕
+            document.getElementById('wakewordStartBtn').disabled = false;
+        } else {
+            // 如果服務尚未初始化，先初始化服務
+            await initializeWakewordService();
+            await preloadCustomWakewordModel();
+            // 啟用開始按鈕
+            document.getElementById('wakewordStartBtn').disabled = false;
+        }
+    } catch (error) {
+        console.error('載入自訂模型失敗:', error);
+        log('wakewordLog', `❌ 載入失敗: ${error.message}`, 'error');
+    }
+    
+    // 清空 input 以允許重新選擇相同檔案
+    event.target.value = '';
+});
+
+// 移除自訂模型
+document.getElementById('removeCustomModelBtn').addEventListener('click', () => {
+    // 如果 WakewordService 存在，移除自訂模型
+    if (wakewordService && customWakewordModel) {
+        wakewordService.removeCustomModel(customWakewordModel.name);
+    }
+    
+    customWakewordModel = null;
+    document.getElementById('customModelInfo').classList.add('hidden');
+    document.getElementById('wakewordSelect').value = 'hey-jarvis';
+    
+    // 確保按鈕狀態正確（如果有內建模型已載入）
+    if (wakewordService) {
+        document.getElementById('wakewordStartBtn').disabled = false;
+    }
+    
+    log('wakewordLog', '已移除自訂模型', 'info');
+    updateStatus('wakewordStatus', '自訂模型已移除', 'info');
+});
+
+// 預載自訂模型到 WakewordService
+async function preloadCustomWakewordModel() {
+    if (!customWakewordModel || !wakewordService) return;
+    
+    try {
+        // 建立 Blob URL 供 ONNX Runtime 載入
+        const blob = new Blob([customWakewordModel.arrayBuffer], { type: 'application/octet-stream' });
+        const modelUrl = URL.createObjectURL(blob);
+        
+        // 註冊自訂模型到服務
+        await wakewordService.registerCustomModel(customWakewordModel.name, modelUrl);
+        
+        // 為 KMU 模型設定更高的閾值和更長的冷卻期
+        if (customWakewordModel.name.includes('kmu')) {
+            wakewordService.options.thresholds[customWakewordModel.name] = 0.7;  // KMU 模型使用更高閾值
+            wakewordService.setCooldownDuration(1500); // 1.5 秒冷卻期
+            log('wakewordLog', `設定 KMU 模型閾值為 0.7，冷卻期為 1.5 秒`, 'info');
+        } else {
+            wakewordService.options.thresholds[customWakewordModel.name] = 0.6;  // 其他自訂模型的預設閾值
+        }
+        
+        log('wakewordLog', `✅ 自訂模型已註冊到服務: ${customWakewordModel.name}`, 'success');
+    } catch (error) {
+        console.error('註冊自訂模型失敗:', error);
+        log('wakewordLog', `❌ 註冊失敗: ${error.message}`, 'error');
+    }
+}
+
 // 喚醒詞測試控制
-document.getElementById('wakewordStartBtn').addEventListener('click', () => {
+document.getElementById('wakewordStartBtn').addEventListener('click', async () => {
     wakewordTesting = true;
+    
+    // 如果選擇自訂模型且尚未載入
+    const wakewordName = document.getElementById('wakewordSelect').value;
+    if (wakewordName === 'custom') {
+        if (!customWakewordModel) {
+            log('wakewordLog', '請先上傳自訂 ONNX 模型', 'warning');
+            wakewordTesting = false;
+            return;
+        }
+        
+        // 確保自訂模型已註冊
+        if (wakewordService) {
+            await preloadCustomWakewordModel();
+        }
+    }
+    
+    // 確保音訊已初始化
+    if (!audioContext || !microphone || !processor) {
+        const ok = await initAudio();
+        if (!ok) {
+            log('wakewordLog', '音訊初始化失敗，請檢查麥克風權限', 'error');
+            wakewordTesting = false;
+            return;
+        }
+    }
     
     // 只在尚未連接時才連接
     try {
@@ -631,14 +1378,23 @@ document.getElementById('wakewordStartBtn').addEventListener('click', () => {
     document.getElementById('wakewordStartBtn').disabled = true;
     document.getElementById('wakewordStopBtn').disabled = false;
     document.getElementById('wakewordSelect').disabled = true;
+    document.getElementById('uploadWakewordBtn').disabled = true;
 
-    const wakewordName = document.getElementById('wakewordSelect').value;
-    updateStatus('wakewordStatus', `正在聆聽 "${wakewordName}"...`, 'active');
-    log('wakewordLog', `開始喚醒詞測試: ${wakewordName}`, 'success');
+    const displayName = wakewordName === 'custom' ? customWakewordModel.name : wakewordName;
+    updateStatus('wakewordStatus', `正在聆聽 "${displayName}"...`, 'active');
+    log('wakewordLog', `開始喚醒詞測試: ${displayName}`, 'success');
 });
 
 document.getElementById('wakewordStopBtn').addEventListener('click', () => {
     wakewordTesting = false;
+    
+    // 清理該喚醒詞的狀態
+    const wakewordName = document.getElementById('wakewordSelect').value;
+    const actualName = wakewordName === 'custom' ? customWakewordModel?.name : wakewordName;
+    if (actualName && wakewordStates.has(actualName)) {
+        wakewordStates.delete(actualName);
+        console.log(`[wakewordStop] 清理 ${actualName} 狀態`);
+    }
     
     // 只在沒有其他服務使用時才斷開連接
     if (!vadTesting && !whisperRecording) {
@@ -653,6 +1409,7 @@ document.getElementById('wakewordStopBtn').addEventListener('click', () => {
     document.getElementById('wakewordStartBtn').disabled = false;
     document.getElementById('wakewordStopBtn').disabled = true;
     document.getElementById('wakewordSelect').disabled = false;
+    document.getElementById('uploadWakewordBtn').disabled = false;
     updateStatus('wakewordStatus', '測試已停止');
     log('wakewordLog', '停止喚醒詞測試', 'warning');
 });
@@ -660,71 +1417,48 @@ document.getElementById('wakewordStopBtn').addEventListener('click', () => {
 // 切換喚醒詞模型
 document.getElementById('wakewordSelect').addEventListener('change', async (e) => {
     const wakewordId = e.target.value;
-    log('wakewordLog', `切換到 ${wakewordId} 模型...`, 'info');
+    log('wakewordLog', `切換到 ${wakewordId} 模型`, 'info');
 
-    try {
-        // 硬重置所有狀態（根據建議）
-        // 1. 重置運行時狀態
-        wwRuntime.lastTriggerAt = -Infinity;  // 重置觸發時間
-        wwRuntime.consecutiveFrames = 0;      // 重置連續幀計數
-        
-        // 2. 如果正在測試，先停止
-        if (wakewordTesting) {
-            wakewordTesting = false;
-            if (processor) {
-                processor.disconnect();
+    // 如果正在測試，清理該喚醒詞的狀態
+    if (wakewordTesting) {
+        // 清理舊喚醒詞的狀態
+        const oldWakewords = wakewordStates.keys();
+        for (const key of oldWakewords) {
+            if (key !== wakewordId) {
+                wakewordStates.delete(key);
+                console.log(`[wakewordSelect] 清理 ${key} 狀態`);
             }
-            if (microphone) {
-                microphone.disconnect();
-            }
-            document.getElementById('wakewordStartBtn').textContent = '開始測試';
-            document.getElementById('wakewordStartBtn').classList.remove('bg-red-600');
-            document.getElementById('wakewordStartBtn').classList.add('bg-indigo-600');
-            log('wakewordLog', '停止當前測試以切換模型', 'warning');
         }
-        
-        // 使用硬編碼的模型路徑
-        const MODEL_PATHS = {
-            'hey-jarvis': {
-                detectorUrl: '/models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
-                melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx'
-            },
-            'hey-mycroft': {
-                detectorUrl: '/models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
-                melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx'
-            },
-            'alexa': {
-                detectorUrl: '/models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
-                melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx'
-            }
-        };
-
-        const wwPaths = MODEL_PATHS[wakewordId];
-        
-        // 創建配置管理器並設定路徑
-        const config = new WebASRCore.ConfigManager();
-        const wakewordName = wakewordId.replace('-', '_'); // hey-jarvis -> hey_jarvis
-        config.wakeword[wakewordName].detectorPath = wwPaths.detectorUrl;
-        config.wakeword[wakewordName].melspecPath = wwPaths.melspecUrl;
-        config.wakeword[wakewordName].embeddingPath = wwPaths.embeddingUrl;
-        
-        // 3. 清理舊資源
-        wakewordResources = null;
-        wakewordState = null;
-        
-        // 4. 載入新模型
-        wakewordResources = await WebASRCore.loadWakewordResources(wakewordName, config);
-        const dims = WebASRCore.detectWakewordDims(wakewordResources);
-        
-        // 5. 創建全新的狀態（這會清空所有 mel buffer 和 embedding buffer）
-        wakewordState = WebASRCore.createWakewordState(dims);
-        
-        log('wakewordLog', `${wakewordId} 模型載入成功，所有狀態已重置`, 'success');
-    } catch (error) {
-        log('wakewordLog', `載入失敗: ${error.message}`, 'error');
+    }
+    
+    // 重置運行時狀態
+    wwRuntime.lastTriggerAt = -Infinity;
+    wwRuntime.consecutiveFrames = 0;
+    
+    // 如果是自訂模型，確保服務已初始化
+    if (wakewordId === 'custom') {
+        if (!wakewordService) {
+            await initializeWakewordService();
+        }
+        if (customWakewordModel) {
+            await preloadCustomWakewordModel();
+        }
+        return;
+    }
+    
+    // 確保服務已初始化
+    if (!wakewordService) {
+        await initializeWakewordService();
+    }
+    
+    // 重新初始化喚醒詞服務（如果需要）
+    if (!wakewordService.getLoadedModels().includes(wakewordId)) {
+        try {
+            await wakewordService.initialize([wakewordId]);
+            log('wakewordLog', `${wakewordId} 模型初始化成功`, 'success');
+        } catch (error) {
+            log('wakewordLog', `初始化失敗: ${error.message}`, 'error');
+        }
     }
 });
 
@@ -790,7 +1524,15 @@ document.getElementById('whisperStopBtn').addEventListener('click', () => {
     log('whisperLog', `錄音完成，時長 ${recordingDuration} 秒，共 ${recordedAudio.length} 個樣本`, 'success');
 });
 
-// Whisper 轉譯
+// Whisper 串流模式切換
+document.getElementById('whisperStreamingToggle').addEventListener('change', (e) => {
+    const isStreaming = e.target.checked;
+    const label = document.getElementById('whisperStreamingLabel');
+    label.textContent = isStreaming ? '啟用' : '停用';
+    log('whisperLog', `串流模式已${isStreaming ? '啟用' : '停用'}`, 'info');
+});
+
+// Whisper 轉譯 - Event Architecture v2
 document.getElementById('whisperTranscribeBtn').addEventListener('click', async () => {
     if (recordedAudio.length === 0) {
         log('whisperLog', '沒有錄音數據', 'error');
@@ -798,30 +1540,63 @@ document.getElementById('whisperTranscribeBtn').addEventListener('click', async 
     }
 
     document.getElementById('whisperTranscribeBtn').disabled = true;
-    updateStatus('whisperStatus', '正在轉譯...', 'active');
-    log('whisperLog', '開始轉譯...', 'info');
 
     try {
         const audioData = new Float32Array(recordedAudio);
-        const result = await WebASRCore.transcribe(
-            whisperResources,
-            audioData,
-            {
+        const useStreaming = document.getElementById('whisperStreamingToggle').checked;
+
+        log('whisperLog', `使用${useStreaming ? '串流' : '一次性'}模式轉錄`, 'info');
+
+        // 根據串流模式選擇不同的方法
+        let result;
+        if (useStreaming) {
+            // 檢查方法是否存在
+            if (typeof whisperService.transcribeWithStreaming !== 'function') {
+                log('whisperLog', '警告: transcribeWithStreaming 方法不存在，降級使用一般 transcribe 方法', 'warning');
+                result = await whisperService.transcribe(audioData, {
+                    language: 'zh',
+                    task: 'transcribe',
+                    returnSegments: true,
+                    streaming: true  // 嘗試通過選項啟用串流
+                });
+            } else {
+                // 使用串流模式
+                result = await whisperService.transcribeWithStreaming(audioData, {
+                language: 'zh',
+                task: 'transcribe',
+                returnSegments: true,
+                streamCallbacks: {
+                    // on_chunk_start: () => {
+                    //     log('whisperLog', '[回調] 串流塊開始', 'info');
+                    // },
+                    // callback_function: (partial) => {
+                    //     if (partial && partial.trim()) {
+                    //         log('whisperLog', `[回調] 串流部分: "${partial}"`, 'info');
+                    //     }
+                    // },
+                    // on_chunk_end: () => {
+                    //     log('whisperLog', '[回調] 串流塊結束', 'info');
+                    // },
+                    // on_finalize: (finalText) => {
+                    //     // finalText 可能是 undefined，使用預設值
+                    //     const text = finalText || '(串流完成，但無最終文字)';
+                    //     log('whisperLog', `[回調] 串流完成: "${text}"`, 'success');
+                    // }
+                }
+            });
+            }
+        } else {
+            // 使用一次性模式
+            result = await whisperService.transcribe(audioData, {
                 language: 'zh',
                 task: 'transcribe',
                 returnSegments: true
-            }
-        );
-
-        log('whisperLog', `轉譯結果: "${result.text}"`, 'success');
-
-        if (result.segments) {
-            result.segments.forEach(segment => {
-                log('whisperLog', `[${segment.start?.toFixed(1) || '0.0'}-${segment.end?.toFixed(1) || '0.0'}]: ${segment.text}`, 'info');
             });
         }
 
-        updateStatus('whisperStatus', '轉譯完成');
+        // transcriptionComplete 事件會自動處理結果顯示
+        // 這裡可以額外處理結果（如果需要）
+
     } catch (error) {
         log('whisperLog', `轉譯失敗: ${error.message}`, 'error');
         updateStatus('whisperStatus', '轉譯失敗', 'error');
@@ -831,42 +1606,126 @@ document.getElementById('whisperTranscribeBtn').addEventListener('click', async 
 });
 
 // 分頁切換功能
+let currentPage = 1;
+
+// 分頁配置
+const pageConfig = {
+    1: ['speech', 'whisper', 'vad', 'wakeword'],
+    2: ['timer', 'buffer']
+};
+
 function initTabSystem() {
     const tabButtons = document.querySelectorAll('.tab-button');
     const tabContents = document.querySelectorAll('.tab-content');
+    const prevPageBtn = document.getElementById('prevPageBtn');
+    const nextPageBtn = document.getElementById('nextPageBtn');
+    const pageIndicator = document.getElementById('pageIndicator');
+    const page1Tabs = document.getElementById('page1-tabs');
+    const page2Tabs = document.getElementById('page2-tabs');
     
+    // 更新分頁顯示
+    function updatePageDisplay() {
+        // 更新分頁標籤顯示
+        if (currentPage === 1) {
+            page1Tabs.classList.remove('hidden');
+            page2Tabs.classList.add('hidden');
+            prevPageBtn.disabled = true;
+            nextPageBtn.disabled = false;
+        } else {
+            page1Tabs.classList.add('hidden');
+            page2Tabs.classList.remove('hidden');
+            prevPageBtn.disabled = false;
+            nextPageBtn.disabled = true;
+        }
+        
+        // 更新頁碼指示器
+        pageIndicator.textContent = `${currentPage} / 2`;
+        
+        // 顯示當前頁的第一個分頁內容
+        const firstTabOfPage = pageConfig[currentPage][0];
+        showTab(firstTabOfPage);
+    }
+    
+    // 切換到指定分頁
+    function showTab(tabName) {
+        // 更新按鈕狀態
+        tabButtons.forEach(btn => {
+            const btnTab = btn.getAttribute('data-tab');
+            if (btnTab === tabName) {
+                btn.classList.add('active', 'text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+                btn.classList.remove('text-gray-600');
+            } else {
+                btn.classList.remove('active', 'text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
+                btn.classList.add('text-gray-600');
+            }
+        });
+        
+        // 切換內容顯示
+        tabContents.forEach(content => {
+            if (content.id === `tab-${tabName}`) {
+                content.classList.remove('hidden');
+                content.classList.add('flex');
+            } else {
+                content.classList.add('hidden');
+                content.classList.remove('flex');
+            }
+        });
+        
+        // 特殊處理不同分頁的初始化
+        if (tabName === 'whisper') {
+            // Whisper 模型資訊更新 (如果函數存在)
+            if (typeof updateWhisperModelInfo === 'function') {
+                updateWhisperModelInfo();
+            }
+        } else if (tabName === 'timer') {
+            // 初始化計時器顯示 (如果函數存在)
+            if (typeof updateTimerDisplay === 'function') {
+                updateTimerDisplay();  // 不需要參數，使用全域 currentTimerId
+            }
+        }
+        
+        // 記錄切換
+        console.log(`切換到 ${tabName} 分頁`);
+    }
+    
+    // 分頁按鈕事件
+    prevPageBtn.addEventListener('click', () => {
+        if (currentPage > 1) {
+            currentPage--;
+            updatePageDisplay();
+        }
+    });
+    
+    nextPageBtn.addEventListener('click', () => {
+        if (currentPage < 2) {
+            currentPage++;
+            updatePageDisplay();
+        }
+    });
+    
+    // 分頁標籤按鈕事件
     tabButtons.forEach(button => {
         button.addEventListener('click', () => {
             const targetTab = button.getAttribute('data-tab');
-            
-            // 更新按鈕狀態
-            tabButtons.forEach(btn => {
-                btn.classList.remove('active', 'text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-                btn.classList.add('text-gray-600');
-            });
-            
-            button.classList.add('active', 'text-indigo-600', 'border-b-2', 'border-indigo-600', 'bg-indigo-50');
-            button.classList.remove('text-gray-600');
-            
-            // 切換內容顯示
-            tabContents.forEach(content => {
-                if (content.id === `tab-${targetTab}`) {
-                    content.classList.remove('hidden');
-                    content.classList.add('flex');
-                } else {
-                    content.classList.add('hidden');
-                    content.classList.remove('flex');
-                }
-            });
-            
-            // 記錄切換
-            console.log(`切換到 ${targetTab} 分頁`);
+            showTab(targetTab);
         });
     });
+    
+    // 初始化顯示第一頁
+    updatePageDisplay();
 }
 
 // 初始化分頁系統
 initTabSystem();
+
+// Timer 相關變數 (暫時定義以避免錯誤)
+let timerStates = {};
+
+// Whisper 模型資訊更新函數 (placeholder)
+function updateWhisperModelInfo() {
+    // 這個函數會在 Whisper 服務初始化後被實作
+    console.log('Whisper model info will be updated when service is initialized');
+}
 
 // 初始化日誌
 log('vadLog', 'VAD 服務就緒', 'info');
@@ -877,8 +1736,8 @@ log('vadLog', 'VAD 服務就緒', 'info');
 
 // Buffer/Chunker 測試變數
 let bufferTesting = false;
-let audioRingBuffer = null;
-let audioChunker = null;
+// audioRingBuffer 已在頂部宣告 (line 20)
+// audioChunker 已在頂部宣告 (line 19)
 let bufferStats = {
     totalSamplesWritten: 0,
     totalChunksProcessed: 0,
@@ -1398,9 +2257,9 @@ document.getElementById('diagnosticBtn').addEventListener('click', async () => {
         // 模型狀態
         html += '<div class="bg-gray-800/50 rounded-lg p-3">';
         html += '<h3 class="text-white font-bold text-lg mb-2">📦 模型狀態</h3>';
-        html += `<div class="text-gray-200 text-sm ml-1">VAD: ${vadSession ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
-        html += `<div class="text-gray-200 text-sm ml-1">喚醒詞: ${wakewordResources ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
-        html += `<div class="text-gray-200 text-sm ml-1">Whisper: ${whisperResources ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">VAD: ${vadService ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">喚醒詞: ${wakewordService ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
+        html += `<div class="text-gray-200 text-sm ml-1">Whisper: ${whisperService ? '<span class="text-green-400 font-semibold">✅ 已載入</span>' : '<span class="text-yellow-400">⏳ 未載入</span>'}</div>`;
         html += '</div>';
         
         html += '</div>'; // 結束左側欄
@@ -1462,16 +2321,72 @@ document.getElementById('diagnosticBtn').addEventListener('click', async () => {
 // 倒數計時器測試相關
 // ========================================
 
-// 計時器管理器實例
-let timerManager = null;
+// 計時器管理器實例 - Event Architecture v2
+// timerService 已在第 14 行宣告
 let currentTimerId = 'timer1';
 let updateInterval = null;
 
-// 初始化計時器管理器
-function initTimerManager() {
-    if (!timerManager) {
-        timerManager = new WebASRCore.TimerManager();
-        log('timerLog', '計時器管理器初始化完成', 'success');
+// 初始化計時器服務 - Event Architecture v2
+function initTimerService() {
+    if (!timerService) {
+        // 使用 TimerService 替代 TimerManager
+        timerService = new WebASRCore.TimerService();
+        
+        // 設置事件監聽器
+        timerService.on('ready', (event) => {
+            log('timerLog', 'TimerService 已就緒', 'success');
+        });
+        
+        timerService.on('start', (event) => {
+            log('timerLog', `▶️ 計時器 ${event.id} 已啟動 (${event.duration}ms)`, 'success');
+            updateTimerDisplay();
+            updateAllTimersList();
+        });
+        
+        timerService.on('tick', (event) => {
+            // 自動更新顯示（如果是當前計時器）
+            if (event.id === currentTimerId) {
+                const remaining = event.remaining;
+                document.getElementById('timerDisplay').textContent = formatTime(remaining);
+                document.getElementById('timerProgressBar').style.width = `${event.progress}%`;
+            }
+        });
+        
+        timerService.on('timeout', (event) => {
+            log('timerLog', `⏰ 計時器 ${event.id} 時間到！`, 'warning');
+            if (event.id === currentTimerId) {
+                updateTimerDisplay();
+            }
+            updateAllTimersList();
+            
+            // 播放提示音（可選）
+            // playAlertSound();
+        });
+        
+        timerService.on('pause', (event) => {
+            log('timerLog', `⏸️ 計時器 ${event.id} 已暫停`, 'warning');
+            updateTimerDisplay();
+            updateAllTimersList();
+        });
+        
+        timerService.on('resume', (event) => {
+            log('timerLog', `▶️ 計時器 ${event.id} 已恢復`, 'success');
+            updateTimerDisplay();
+            updateAllTimersList();
+        });
+        
+        timerService.on('reset', (event) => {
+            log('timerLog', `🔄 計時器 ${event.id} 已重置`, 'info');
+            updateTimerDisplay();
+            updateAllTimersList();
+        });
+        
+        timerService.on('error', (event) => {
+            log('timerLog', `錯誤: ${event.error.message} (${event.context})`, 'error');
+        });
+        
+        
+        log('timerLog', 'TimerService 初始化完成', 'success');
     }
 }
 
@@ -1492,19 +2407,19 @@ function formatTimeWithMs(milliseconds) {
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
 }
 
-// 更新計時器顯示
+// 更新計時器顯示 - Event Architecture v2
 function updateTimerDisplay() {
-    if (!timerManager) return;
+    if (!timerService) return;
     
-    const state = timerManager.getTimerState(currentTimerId);
+    const state = timerService.getTimerState(currentTimerId);
     if (!state) return;
     
     // 更新時間顯示
-    const remaining = timerManager.getRemainingTime(currentTimerId);
+    const remaining = timerService.getRemainingTime(currentTimerId);
     document.getElementById('timerDisplay').textContent = formatTime(remaining);
     
     // 更新進度條
-    const progress = timerManager.getProgress(currentTimerId);
+    const progress = timerService.getProgress(currentTimerId);
     document.getElementById('timerProgressBar').style.width = `${progress}%`;
     
     // 更新狀態文字
@@ -1529,22 +2444,25 @@ function updateTimerDisplay() {
     }
 }
 
-// 更新所有計時器列表
+// 更新所有計時器列表 - Event Architecture v2
 function updateAllTimersList() {
-    if (!timerManager) return;
+    if (!timerService) return;
     
-    const allTimers = timerManager.getAllTimers();
+    const allTimerIds = timerService.getAllTimerIds();
     const listEl = document.getElementById('allTimersList');
     
-    if (allTimers.size === 0) {
+    if (allTimerIds.length === 0) {
         listEl.innerHTML = '<div class="text-gray-500 text-sm">尚無計時器</div>';
         return;
     }
     
     let html = '';
-    for (const [id, state] of allTimers) {
-        const remaining = WebASRCore.Timer.getRemainingTime(state);
-        const progress = WebASRCore.Timer.getProgress(state);
+    for (const id of allTimerIds) {
+        const state = timerService.getTimerState(id);
+        if (!state) continue;
+        
+        const remaining = timerService.getRemainingTime(id);
+        const progress = timerService.getProgress(id);
         const isActive = id === currentTimerId;
         
         html += `
@@ -1591,25 +2509,14 @@ document.querySelectorAll('.timer-preset').forEach(btn => {
         const seconds = parseInt(e.target.dataset.seconds);
         const milliseconds = seconds * 1000;
         
-        initTimerManager();
+        initTimerService();
         
-        // 創建新計時器
-        timerManager.createTimer(currentTimerId, {
-            duration: milliseconds,
-            onTimeout: () => {
-                log('timerLog', `⏰ 計時器 ${currentTimerId} 時間到！`, 'warning');
-                updateTimerDisplay();
-                updateAllTimersList();
-                
-                // 播放提示音（可選）
-                const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQ==');
-                audio.play().catch(() => {});
-            },
-            onTick: (remaining) => {
-                // Tick 回調已在 TimerManager 內部處理
-            },
-            tickInterval: 100
-        });
+        // 創建新計時器 - Event Architecture v2
+        timerService.createTimer(
+            currentTimerId,
+            milliseconds,
+            100  // tickInterval
+        );
         
         updateTimerDisplay();
         updateAllTimersList();
@@ -1626,17 +2533,14 @@ document.getElementById('setCustomTimeBtn').addEventListener('click', () => {
     }
     
     const milliseconds = seconds * 1000;
-    initTimerManager();
+    initTimerService();
     
-    timerManager.createTimer(currentTimerId, {
-        duration: milliseconds,
-        onTimeout: () => {
-            log('timerLog', `⏰ 計時器 ${currentTimerId} 時間到！`, 'warning');
-            updateTimerDisplay();
-            updateAllTimersList();
-        },
-        tickInterval: 100
-    });
+    // 使用 TimerService 創建計時器
+    timerService.createTimer(
+        currentTimerId,
+        milliseconds,
+        100  // tickInterval
+    );
     
     updateTimerDisplay();
     updateAllTimersList();
@@ -1645,22 +2549,18 @@ document.getElementById('setCustomTimeBtn').addEventListener('click', () => {
 
 // 開始按鈕
 document.getElementById('timerStartBtn').addEventListener('click', () => {
-    initTimerManager();
+    initTimerService();
     
     // 如果當前計時器不存在，先創建一個預設 30 秒的
-    if (!timerManager.getTimerState(currentTimerId)) {
-        timerManager.createTimer(currentTimerId, {
-            duration: 30000,
-            onTimeout: () => {
-                log('timerLog', `⏰ 計時器 ${currentTimerId} 時間到！`, 'warning');
-                updateTimerDisplay();
-                updateAllTimersList();
-            },
-            tickInterval: 100
-        });
+    if (!timerService.getTimerState(currentTimerId)) {
+        timerService.createTimer(
+            currentTimerId,
+            30000,
+            100  // tickInterval
+        );
     }
     
-    timerManager.startTimer(currentTimerId);
+    timerService.start(currentTimerId);
     
     // 開始更新顯示
     if (updateInterval) clearInterval(updateInterval);
@@ -1679,9 +2579,9 @@ document.getElementById('timerStartBtn').addEventListener('click', () => {
 
 // 暫停按鈕
 document.getElementById('timerPauseBtn').addEventListener('click', () => {
-    if (!timerManager) return;
+    if (!timerService) return;
     
-    timerManager.pauseTimer(currentTimerId);
+    timerService.pause(currentTimerId);
     
     // 停止更新
     if (updateInterval) {
@@ -1702,9 +2602,9 @@ document.getElementById('timerPauseBtn').addEventListener('click', () => {
 
 // 繼續按鈕
 document.getElementById('timerResumeBtn').addEventListener('click', () => {
-    if (!timerManager) return;
+    if (!timerService) return;
     
-    timerManager.startTimer(currentTimerId);
+    timerService.start(currentTimerId);
     
     // 重新開始更新
     if (updateInterval) clearInterval(updateInterval);
@@ -1724,9 +2624,9 @@ document.getElementById('timerResumeBtn').addEventListener('click', () => {
 
 // 重置按鈕
 document.getElementById('timerResetBtn').addEventListener('click', () => {
-    if (!timerManager) return;
+    if (!timerService) return;
     
-    timerManager.resetTimer(currentTimerId);
+    timerService.reset(currentTimerId);
     
     // 停止更新
     if (updateInterval) {
@@ -1747,15 +2647,17 @@ document.getElementById('timerResetBtn').addEventListener('click', () => {
 
 // 延長時間按鈕
 document.getElementById('timerExtendBtn').addEventListener('click', () => {
-    if (!timerManager) return;
+    if (!timerService) return;
     
-    const state = timerManager.getTimerState(currentTimerId);
+    const state = timerService.getTimerState(currentTimerId);
     if (!state) {
         log('timerLog', '請先創建計時器', 'error');
         return;
     }
     
-    timerManager.extendTimer(currentTimerId, 10000); // 延長 10 秒
+    // TimerService 使用 reset 方法來修改時間
+    const currentTime = timerService.getRemainingTime(currentTimerId) || 0;
+    timerService.reset(currentTimerId, currentTime + 10000); // 延長 10 秒
     
     updateTimerDisplay();
     updateAllTimersList();
@@ -1770,10 +2672,10 @@ document.getElementById('createTimerBtn').addEventListener('click', () => {
         return;
     }
     
-    initTimerManager();
+    initTimerService();
     
     // 檢查是否已存在
-    if (timerManager.getTimerState(timerId)) {
+    if (timerService.getTimerState(timerId)) {
         log('timerLog', `計時器 ${timerId} 已存在`, 'warning');
         currentTimerId = timerId;
         updateTimerDisplay();
@@ -1782,17 +2684,11 @@ document.getElementById('createTimerBtn').addEventListener('click', () => {
     }
     
     // 創建新計時器（預設 30 秒）
-    timerManager.createTimer(timerId, {
-        duration: 30000,
-        onTimeout: () => {
-            log('timerLog', `⏰ 計時器 ${timerId} 時間到！`, 'warning');
-            if (timerId === currentTimerId) {
-                updateTimerDisplay();
-            }
-            updateAllTimersList();
-        },
-        tickInterval: 100
-    });
+    timerService.createTimer(
+        timerId,
+        30000,
+        100  // tickInterval
+    );
     
     currentTimerId = timerId;
     updateTimerDisplay();
@@ -1808,7 +2704,7 @@ document.getElementById('switchTimerBtn').addEventListener('click', () => {
         return;
     }
     
-    if (!timerManager || !timerManager.getTimerState(timerId)) {
+    if (!timerService || !timerService.getTimerState(timerId)) {
         log('timerLog', `計時器 ${timerId} 不存在`, 'error');
         return;
     }
@@ -1822,7 +2718,7 @@ document.getElementById('switchTimerBtn').addEventListener('click', () => {
     currentTimerId = timerId;
     
     // 如果新計時器正在運行，開始更新
-    const state = timerManager.getTimerState(timerId);
+    const state = timerService.getTimerState(timerId);
     if (state && state.isRunning) {
         updateInterval = setInterval(() => {
             updateTimerDisplay();
@@ -1837,3 +2733,271 @@ document.getElementById('switchTimerBtn').addEventListener('click', () => {
 
 // 初始化計時器顯示
 log('timerLog', '倒數計時器測試就緒', 'info');
+
+// ========================================
+// Speech API 測試功能
+// ========================================
+
+// Speech API 服務實例
+let speechService = null;
+
+// TTS 狀態
+let isSpeaking = false;
+let isPaused = false;
+
+// STT 狀態
+let isListening = false;
+let finalTranscript = '';
+let interimTranscript = '';
+
+// 初始化 Speech API 服務
+async function initSpeechService() {
+    try {
+        const { SpeechService } = WebASRCore;
+        speechService = new SpeechService();
+        
+        // SpeechService 的 constructor 會自動調用 initialize()
+        // 只需等待初始化完成
+        await new Promise((resolve) => {
+            speechService.once('ready', (data) => {
+                log('speechLog', `✅ Speech API 初始化成功`, 'success');
+                log('speechLog', `TTS 支援: ${data.ttsSupported}, STT 支援: ${data.sttSupported}`, 'info');
+                
+                // 填充語音選項
+                const voiceSelect = document.getElementById('ttsVoiceSelect');
+                voiceSelect.innerHTML = '<option value="">預設</option>';
+                data.voices.forEach(voice => {
+                    const option = document.createElement('option');
+                    option.value = voice.name;
+                    option.textContent = `${voice.name} (${voice.lang})`;
+                    voiceSelect.appendChild(option);
+                });
+                
+                resolve();
+            });
+        });
+        
+        // 設定 TTS 事件監聽器
+        speechService.on('tts-start', (data) => {
+            log('speechLog', `🔊 開始說話: "${data.text}"`, 'info');
+            document.getElementById('ttsStatus').innerHTML = 
+                '<div class="text-blue-800 font-medium text-sm">TTS 狀態：說話中...</div>';
+            document.getElementById('ttsPauseBtn').disabled = false;
+            document.getElementById('ttsStopBtn').disabled = false;
+            isSpeaking = true;
+            isPaused = false;
+        });
+        
+        speechService.on('tts-end', (data) => {
+            log('speechLog', `✅ 說話結束 (耗時: ${(data.duration/1000).toFixed(2)}秒)`, 'success');
+            document.getElementById('ttsStatus').innerHTML = 
+                '<div class="text-blue-800 font-medium text-sm">TTS 狀態：就緒</div>';
+            document.getElementById('ttsPauseBtn').disabled = true;
+            document.getElementById('ttsStopBtn').disabled = true;
+            isSpeaking = false;
+            isPaused = false;
+        });
+        
+        speechService.on('tts-pause', (data) => {
+            log('speechLog', `⏸️ 暫停說話`, 'warning');
+            document.getElementById('ttsStatus').innerHTML = 
+                '<div class="text-yellow-800 font-medium text-sm">TTS 狀態：已暫停</div>';
+            document.getElementById('ttsPauseBtn').textContent = '繼續';
+            document.getElementById('ttsPauseBtn').innerHTML = '<i class="fas fa-play mr-2"></i>繼續';
+            isPaused = true;
+        });
+        
+        speechService.on('tts-resume', (data) => {
+            log('speechLog', `▶️ 繼續說話`, 'info');
+            document.getElementById('ttsStatus').innerHTML = 
+                '<div class="text-blue-800 font-medium text-sm">TTS 狀態：說話中...</div>';
+            document.getElementById('ttsPauseBtn').innerHTML = '<i class="fas fa-pause mr-2"></i>暫停';
+            isPaused = false;
+        });
+        
+        speechService.on('tts-boundary', (data) => {
+            // 可選：顯示當前說的單字
+            // log('speechLog', `當前單字: ${data.word}`, 'info');
+        });
+        
+        // 設定 STT 事件監聽器
+        speechService.on('stt-start', (data) => {
+            log('speechLog', `🎤 開始語音識別 (語言: ${data.language})`, 'info');
+            document.getElementById('sttStatus').innerHTML = 
+                '<div class="text-green-800 font-medium text-sm">STT 狀態：識別中...</div>';
+            document.getElementById('sttStartBtn').disabled = true;
+            document.getElementById('sttStopBtn').disabled = false;
+            isListening = true;
+            finalTranscript = '';
+            interimTranscript = '';
+        });
+        
+        speechService.on('stt-result', (data) => {
+            if (data.isFinal) {
+                finalTranscript += data.transcript + ' ';
+                log('speechLog', `📝 最終結果: ${data.transcript}`, 'success');
+            } else {
+                interimTranscript = data.transcript;
+            }
+            
+            // 更新顯示
+            const showInterim = document.getElementById('sttInterimCheck').checked;
+            const resultDiv = document.getElementById('sttResult');
+            
+            if (showInterim && interimTranscript) {
+                resultDiv.innerHTML = `
+                    <span class="text-gray-800">${finalTranscript}</span>
+                    <span class="text-gray-400 italic">${interimTranscript}</span>
+                `;
+            } else {
+                resultDiv.innerHTML = `<span class="text-gray-800">${finalTranscript}</span>`;
+            }
+        });
+        
+        speechService.on('stt-end', (data) => {
+            log('speechLog', `✅ 語音識別結束`, 'success');
+            document.getElementById('sttStatus').innerHTML = 
+                '<div class="text-green-800 font-medium text-sm">STT 狀態：就緒</div>';
+            document.getElementById('sttStartBtn').disabled = false;
+            document.getElementById('sttStopBtn').disabled = true;
+            isListening = false;
+        });
+        
+        speechService.on('stt-speechstart', () => {
+            log('speechLog', `🗣️ 檢測到語音開始`, 'info');
+        });
+        
+        speechService.on('stt-speechend', () => {
+            log('speechLog', `🔇 語音結束`, 'info');
+        });
+        
+        speechService.on('stt-nomatch', () => {
+            log('speechLog', `❓ 無法識別語音`, 'warning');
+        });
+        
+        speechService.on('error', (data) => {
+            log('speechLog', `❌ ${data.type.toUpperCase()} 錯誤: ${data.error}`, 'error');
+            
+            if (data.type === 'tts') {
+                document.getElementById('ttsStatus').innerHTML = 
+                    '<div class="text-red-800 font-medium text-sm">TTS 錯誤</div>';
+                document.getElementById('ttsPauseBtn').disabled = true;
+                document.getElementById('ttsStopBtn').disabled = true;
+                isSpeaking = false;
+                isPaused = false;
+            } else if (data.type === 'stt') {
+                document.getElementById('sttStatus').innerHTML = 
+                    '<div class="text-red-800 font-medium text-sm">STT 錯誤</div>';
+                document.getElementById('sttStartBtn').disabled = false;
+                document.getElementById('sttStopBtn').disabled = true;
+                isListening = false;
+            }
+        });
+        
+    } catch (error) {
+        console.error('Speech API 初始化失敗:', error);
+        log('speechLog', `❌ Speech API 初始化失敗: ${error.message}`, 'error');
+    }
+}
+
+// TTS 控制功能
+document.getElementById('ttsSpeakBtn')?.addEventListener('click', async () => {
+    if (!speechService) {
+        await initSpeechService();
+    }
+    
+    const text = document.getElementById('ttsTextInput').value.trim();
+    if (!text) {
+        log('speechLog', '請輸入要說的文字', 'warning');
+        return;
+    }
+    
+    const voice = document.getElementById('ttsVoiceSelect').value;
+    const rate = parseFloat(document.getElementById('ttsRateSlider').value);
+    const pitch = parseFloat(document.getElementById('ttsPitchSlider').value);
+    const volume = parseFloat(document.getElementById('ttsVolumeSlider').value);
+    
+    try {
+        await speechService.speak(text, {
+            voice: voice || undefined,
+            rate,
+            pitch,
+            volume
+        });
+    } catch (error) {
+        log('speechLog', `❌ TTS 錯誤: ${error.message}`, 'error');
+    }
+});
+
+document.getElementById('ttsPauseBtn')?.addEventListener('click', () => {
+    if (!speechService) return;
+    
+    if (isPaused) {
+        speechService.resume();
+    } else {
+        speechService.pause();
+    }
+});
+
+document.getElementById('ttsStopBtn')?.addEventListener('click', () => {
+    if (!speechService) return;
+    
+    speechService.stop();
+    log('speechLog', '⏹️ 停止說話', 'info');
+    document.getElementById('ttsStatus').innerHTML = 
+        '<div class="text-blue-800 font-medium text-sm">TTS 狀態：就緒</div>';
+    document.getElementById('ttsPauseBtn').disabled = true;
+    document.getElementById('ttsStopBtn').disabled = true;
+    isSpeaking = false;
+    isPaused = false;
+});
+
+// TTS 滑動條更新
+document.getElementById('ttsRateSlider')?.addEventListener('input', (e) => {
+    document.getElementById('ttsRateValue').textContent = e.target.value;
+});
+
+document.getElementById('ttsPitchSlider')?.addEventListener('input', (e) => {
+    document.getElementById('ttsPitchValue').textContent = e.target.value;
+});
+
+document.getElementById('ttsVolumeSlider')?.addEventListener('input', (e) => {
+    document.getElementById('ttsVolumeValue').textContent = e.target.value;
+});
+
+// STT 控制功能
+document.getElementById('sttStartBtn')?.addEventListener('click', async () => {
+    if (!speechService) {
+        await initSpeechService();
+    }
+    
+    const language = document.getElementById('sttLangSelect').value;
+    const continuous = document.getElementById('sttContinuousCheck').checked;
+    const interimResults = document.getElementById('sttInterimCheck').checked;
+    
+    try {
+        await speechService.startListening({
+            language,
+            continuous,
+            interimResults
+        });
+    } catch (error) {
+        log('speechLog', `❌ STT 錯誤: ${error.message}`, 'error');
+    }
+});
+
+document.getElementById('sttStopBtn')?.addEventListener('click', () => {
+    if (!speechService) return;
+    
+    speechService.stopListening();
+    log('speechLog', '⏹️ 停止語音識別', 'info');
+});
+
+// 初始化 Speech API 測試
+log('speechLog', 'Speech API 測試就緒', 'info');
+
+// 自動初始化 Speech Service 以載入語音列表
+initSpeechService().catch(error => {
+    console.error('Failed to initialize Speech Service:', error);
+    log('speechLog', `⚠️ 自動初始化失敗: ${error.message}`, 'warning');
+});

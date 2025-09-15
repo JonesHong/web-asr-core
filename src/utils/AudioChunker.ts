@@ -17,19 +17,18 @@ export class AudioChunker {
     /**
      * @param chunkSize 每個塊的大小（樣本數）
      * @param overlap 重疊樣本數（用於保持連續性，預設為 0）
-     * @param serviceType 服務類型，用於從 ConfigManager 取得預設值
-     * @param config 可選的配置管理器實例
+     * @param serviceType 服務類型，用於取得預設值
      */
     constructor(
         chunkSize?: number,
         overlap?: number,
-        serviceType?: 'vad' | 'wakeword' | 'whisper',
-        config: ConfigManager = ConfigManager.getInstance()
+        serviceType?: 'vad' | 'wakeword' | 'whisper'
     ) {
         this.serviceType = serviceType;
         
-        // 如果指定了服務類型，從配置取得預設值
+        // 如果指定了服務類型，使用對應的預設值
         if (serviceType && !chunkSize && !overlap) {
+            const config = ConfigManager.getInstance();
             const serviceConfig = config.audio.chunker[serviceType];
             this.chunkSize = serviceConfig.chunkSize;
             this.overlap = serviceConfig.overlap;
@@ -48,24 +47,24 @@ export class AudioChunker {
     }
     
     /**
-     * 從 ConfigManager 建立 VAD 專用的 Chunker
+     * 建立 VAD 專用的 Chunker
      */
-    static forVAD(config: ConfigManager = ConfigManager.getInstance()): AudioChunker {
-        return new AudioChunker(undefined, undefined, 'vad', config);
+    static forVAD(): AudioChunker {
+        return new AudioChunker(undefined, undefined, 'vad');
     }
     
     /**
-     * 從 ConfigManager 建立 WakeWord 專用的 Chunker
+     * 建立 WakeWord 專用的 Chunker
      */
-    static forWakeWord(config: ConfigManager = ConfigManager.getInstance()): AudioChunker {
-        return new AudioChunker(undefined, undefined, 'wakeword', config);
+    static forWakeWord(): AudioChunker {
+        return new AudioChunker(undefined, undefined, 'wakeword');
     }
     
     /**
-     * 從 ConfigManager 建立 Whisper 專用的 Chunker
+     * 建立 Whisper 專用的 Chunker
      */
-    static forWhisper(config: ConfigManager = ConfigManager.getInstance()): AudioChunker {
-        return new AudioChunker(undefined, undefined, 'whisper', config);
+    static forWhisper(): AudioChunker {
+        return new AudioChunker(undefined, undefined, 'whisper');
     }
 
     /**
@@ -259,7 +258,7 @@ export class MultiChannelAudioChunker {
      * @param serviceType 服務類型 ('vad' | 'wakeword' | 'whisper')
      */
     registerServiceChannel(serviceType: 'vad' | 'wakeword' | 'whisper'): void {
-        const chunker = new AudioChunker(undefined, undefined, serviceType, this.config);
+        const chunker = new AudioChunker(undefined, undefined, serviceType);
         this.chunkers.set(serviceType, chunker);
     }
     

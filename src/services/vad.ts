@@ -15,6 +15,17 @@ import { ConfigManager } from '../utils/config-manager';
 import { ortService } from './ort';
 
 /**
+ * VAD 事件發射器
+ * 
+ * @description 用於發送 VAD 相關事件，外部可以監聽這些事件進行相應處理
+ * 事件類型：
+ * - 'speech-start': 語音開始 { timestamp: number }
+ * - 'speech-end': 語音結束 { timestamp: number }  
+ * - 'processing-error': 處理錯誤 { error: Error, context: string }
+ */
+export const vadEvents = new EventTarget();
+
+/**
  * 載入 VAD 模型會話
  * 
  * @description 從指定 URL 載入 Silero VAD v6 模型並建立 ONNX Runtime 會話
@@ -120,9 +131,10 @@ export async function processVad(
 ): Promise<VadResult> {
   const cfg = config || ConfigManager.getInstance();
   
-  // 如果啟用 Web Worker，使用 Worker 執行推理
-  if (cfg.onnx.useWebWorker) {
-    try {
+  try {
+    // 如果啟用 Web Worker，使用 Worker 執行推理
+    if (cfg.onnx.useWebWorker) {
+      try {
       // 準備完整的輸入數據（上下文 + 新音訊）
       const windowSize = cfg.vad.windowSize;
       const contextSize = cfg.vad.contextSize;
@@ -153,11 +165,21 @@ export async function processVad(
       let hangoverCounter = prevState.hangoverCounter;
       
       if (result.result.isSpeech) {
+        // 檢測語音開始事件
+        if (!prevState.isSpeechActive) {
+          vadEvents.dispatchEvent(new CustomEvent('speech-start', {
+            detail: { timestamp: Date.now() }
+          }));
+        }
         isSpeechActive = true;
         hangoverCounter = params.hangoverFrames;
       } else if (isSpeechActive) {
         hangoverCounter -= 1;
         if (hangoverCounter <= 0) {
+          // 檢測語音結束事件
+          vadEvents.dispatchEvent(new CustomEvent('speech-end', {
+            detail: { timestamp: Date.now() }
+          }));
           isSpeechActive = false;
         }
       }
@@ -176,9 +198,16 @@ export async function processVad(
       };
     } catch (error) {
       console.warn('[VAD] Worker inference failed, falling back to main thread:', error);
+      // 發出處理錯誤事件
+      vadEvents.dispatchEvent(new CustomEvent('processing-error', {
+        detail: { 
+          error: error as Error, 
+          context: 'worker-inference' 
+        }
+      }));
       // 如果 Worker 失敗，繼續使用主執行緒
     }
-  }
+    }
   
   // Silero VAD v6 模型輸入規格：
   // - input: [1, 576] (64 個上下文樣本 + 512 個新樣本)
@@ -233,12 +262,22 @@ export async function processVad(
   
   if (vadDetected) {
     // 檢測到語音 - 激活狀態並重置延遲計數器
+    if (!prevState.isSpeechActive) {
+      // 發出語音開始事件
+      vadEvents.dispatchEvent(new CustomEvent('speech-start', {
+        detail: { timestamp: Date.now() }
+      }));
+    }
     isSpeechActive = true;
     hangoverCounter = params.hangoverFrames;
   } else if (isSpeechActive) {
     // 未檢測到語音但仍處於活動狀態 - 遞減延遲計數器
     hangoverCounter -= 1;
     if (hangoverCounter <= 0) {
+      // 發出語音結束事件
+      vadEvents.dispatchEvent(new CustomEvent('speech-end', {
+        detail: { timestamp: Date.now() }
+      }));
       isSpeechActive = false;
     }
   }
@@ -256,6 +295,17 @@ export async function processVad(
     score, 
     state 
   };
+  
+  } catch (error) {
+    // 發出處理錯誤事件
+    vadEvents.dispatchEvent(new CustomEvent('processing-error', {
+      detail: { 
+        error: error as Error, 
+        context: 'processVad' 
+      }
+    }));
+    throw error; // 重新拋出錯誤以保持原有行為
+  }
 }
 
 /**

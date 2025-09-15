@@ -12,6 +12,17 @@ import type { WhisperResources, WhisperOptions, WhisperResult, WhisperLoadOption
 import { ConfigManager } from '../utils/config-manager';
 
 /**
+ * Whisper 事件發射器
+ * 
+ * @description 用於發送語音識別相關事件，外部可以監聽這些事件進行相應處理
+ * 事件類型：
+ * - 'transcription-start': 轉錄開始 { timestamp: number }
+ * - 'transcription-complete': 轉錄完成 { text: string, duration: number }
+ * - 'processing-error': 處理錯誤 { error: Error, context: string }
+ */
+export const whisperEvents = new EventTarget();
+
+/**
  * 使用 transformers.js 載入 Whisper 模型資源
  * 
  * @description 動態載入 Whisper 語音辨識模型，支援 CDN 和 npm 包兩種載入方式
@@ -56,7 +67,7 @@ export async function loadWhisperResources(
     } else {
       // 備用方案：動態匯入 npm 套件
       try {
-        ({ pipeline, env } = await import('@xenova/transformers'));
+        ({ pipeline, env } = await import('@huggingface/transformers'));
       } catch (importError) {
         // 最後手段：檢查是否以其他方式載入
         if (typeof window !== 'undefined' && (window as any).__transformers_module) {
@@ -68,19 +79,39 @@ export async function loadWhisperResources(
     }
     
     // 使用配置或選項設置環境
-    const localBasePath = opts?.localBasePath || cfg.whisper.localBasePath;
     const wasmPaths = opts?.wasmPaths || cfg.whisper.wasmPaths;
-    
-    // 如果指定了本地模型路徑，配置環境
-    if (localBasePath) {
-      // 設置本地模型路徑
-      env.localModelPath = localBasePath;
-      // 禁用遠端模型載入
+
+    // 初始化 backends 物件結構（避免 undefined 錯誤）
+    env.backends = env.backends || {};
+    env.backends.onnx = env.backends.onnx || {};
+    env.backends.onnx.wasm = env.backends.onnx.wasm || {};
+
+    // 根據配置決定使用本地還是遠端模式
+    if (opts?.localBasePath || cfg.whisper.localBasePath) {
+      // 有設定本地路徑，使用本地模式
+      env.allowLocalModels = true;
+      env.localModelPath = opts?.localBasePath || cfg.whisper.localBasePath;
       env.allowRemoteModels = false;
-      // 可選：如果提供了 WASM 路徑則設置
-      if (wasmPaths) {
-        env.backends.onnx.wasm.wasmPaths = wasmPaths;
-      }
+    } else {
+      // 沒有設定本地路徑，使用遠端模式
+      env.allowLocalModels = false;
+      env.remoteHost = 'https://huggingface.co';
+      env.remotePathTemplate = '{model}/resolve/{revision}/';
+    env.allowRemoteModels = true;
+    }
+
+    // 設置 WASM 路徑 - 支援字串路徑或物件對映
+    if (wasmPaths) {
+      env.backends.onnx.wasm.wasmPaths = wasmPaths;
+    } else {
+      // 預設使用物件對映方式，優先使用本地檔案
+      env.backends.onnx.wasm.wasmPaths = {
+        'ort-wasm-simd-threaded.jsep.mjs':  './public/ort/ort-wasm-simd-threaded.jsep.mjs',
+        'ort-wasm-simd-threaded.jsep.wasm': './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+        'ort-wasm.wasm':                    './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+        'ort-wasm-simd.wasm':               './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+        'ort-wasm-simd-threaded.wasm':      './public/ort/ort-wasm-simd-threaded.wasm'
+      };
     }
     
     // 創建自動語音辨識管道
@@ -91,12 +122,11 @@ export async function loadWhisperResources(
       {
         quantized: opts?.quantized ?? cfg.whisper.quantized,
         // WebGPU 加速設定
-        device: opts?.device ?? cfg.whisper.device,
-        dtype: opts?.dtype ?? cfg.whisper.dtype,
-        // 如果指定了本地路徑，強制僅使用本地檔案
-        ...(localBasePath && { 
-          local_files_only: true,
-          cache_dir: localBasePath 
+        device: opts?.device ?? cfg.whisper.device ?? 'wasm',
+        dtype: opts?.dtype ?? cfg.whisper.dtype ?? 'q8',
+        // 添加進度回調（如果提供）
+        ...(opts?.progress_callback && {
+          progress_callback: opts.progress_callback
         })
       }
     );
@@ -138,43 +168,296 @@ export async function transcribe(
   audio: Float32Array,
   options?: WhisperOptions
 ): Promise<WhisperResult> {
+  const startTime = Date.now();
+  const config = new ConfigManager();
+
   try {
-    // 準備管道選項
-    const pipelineOptions: any = {
-      // 語言規格
-      ...(options?.language && { language: options.language }),
-      
-      // 任務類型（轉錄或翻譯）
-      ...(options?.task && { task: options.task }),
-      
-      // 返回片段時間戳
-      return_timestamps: options?.returnSegments ?? false,
-      
-      // 傳遞任何額外選項
-      ...options,
-    };
-    
-    // 執行語音辨識管道
-    const output = await resources.pipeline(audio, pipelineOptions);
-    
-    // 格式化結果
-    const result: WhisperResult = {
-      text: output?.text || '',
-    };
-    
-    // 如果請求且可用，添加時間戳片段
-    if (options?.returnSegments && output?.chunks) {
-      result.segments = output.chunks.map((chunk: any) => ({
-        text: chunk.text || '',
-        start: chunk.timestamp?.[0] ?? 0,
-        end: chunk.timestamp?.[1] ?? 0,
-      }));
+    // 發出轉錄開始事件
+    whisperEvents.dispatchEvent(new CustomEvent('transcription-start', {
+      detail: { timestamp: startTime }
+    }));
+
+    // 決定是否使用串流模式
+    const useStreaming = options?.streaming ?? config.whisper.streaming.enabled;
+
+    if (useStreaming) {
+      // 串流模式
+      return await transcribeWithStreaming(resources, audio, options, config, startTime);
+    } else {
+      // 一次性轉錄模式（原有邏輯）
+      return await transcribeOneShot(resources, audio, options, startTime);
     }
-    
-    return result;
   } catch (error) {
+    // 發出處理錯誤事件
+    whisperEvents.dispatchEvent(new CustomEvent('processing-error', {
+      detail: {
+        error: error as Error,
+        context: 'transcribe'
+      }
+    }));
     throw new Error(`語音轉錄失敗: ${error}`);
   }
+}
+
+/**
+ * 一次性轉錄（原有邏輯）
+ * @private
+ */
+async function transcribeOneShot(
+  resources: WhisperResources,
+  audio: Float32Array,
+  options?: WhisperOptions,
+  startTime?: number
+): Promise<WhisperResult> {
+  // 準備管道選項
+  const pipelineOptions: any = {
+    // 語言規格
+    ...(options?.language && { language: options.language }),
+
+    // 任務類型（轉錄或翻譯）
+    ...(options?.task && { task: options.task }),
+
+    // 返回片段時間戳
+    return_timestamps: options?.returnSegments ?? false,
+
+    // 傳遞任何額外選項
+    ...options,
+  };
+
+  // 執行語音辨識管道
+  const output = await resources.pipeline(audio, pipelineOptions);
+
+  // 格式化結果
+  const result: WhisperResult = {
+    text: output?.text || '',
+  };
+
+  // 如果請求且可用，添加時間戳片段
+  if (options?.returnSegments && output?.chunks) {
+    result.segments = output.chunks.map((chunk: any) => ({
+      text: chunk.text || '',
+      start: chunk.timestamp?.[0] ?? 0,
+      end: chunk.timestamp?.[1] ?? 0,
+    }));
+  }
+
+  // 發出轉錄完成事件
+  const duration = startTime ? Date.now() - startTime : 0;
+  whisperEvents.dispatchEvent(new CustomEvent('transcription-complete', {
+    detail: {
+      text: result.text,
+      duration: duration
+    }
+  }));
+
+  return result;
+}
+
+/**
+ * 串流轉錄模式
+ * @private
+ */
+async function transcribeWithStreaming(
+  resources: WhisperResources,
+  audio: Float32Array,
+  options?: WhisperOptions,
+  config?: ConfigManager,
+  startTime?: number
+): Promise<WhisperResult> {
+  const cfg = config || new ConfigManager();
+
+  // 動態載入 WhisperTextStreamer
+  let WhisperTextStreamer: any;
+
+  // 嘗試從全域載入（CDN 方式）
+  if (typeof window !== 'undefined' && (window as any).transformers) {
+    const transformersGlobal = (window as any).transformers;
+    WhisperTextStreamer = transformersGlobal.WhisperTextStreamer;
+
+    // 檢查是否成功載入
+    if (!WhisperTextStreamer) {
+      console.error('window.transformers 存在但沒有 WhisperTextStreamer:', Object.keys(transformersGlobal));
+      throw new Error('WhisperTextStreamer 未在 window.transformers 中找到，請確保正確載入 transformers.js v3+');
+    }
+  } else {
+    // 嘗試從 npm 套件載入
+    try {
+      const transformersModule = await import('@huggingface/transformers');
+      WhisperTextStreamer = transformersModule.WhisperTextStreamer;
+
+      if (!WhisperTextStreamer) {
+        console.error('transformers 模組已載入但沒有 WhisperTextStreamer:', Object.keys(transformersModule));
+        throw new Error('WhisperTextStreamer 未在 transformers 模組中找到');
+      }
+    } catch (error) {
+      console.error('載入 WhisperTextStreamer 失敗:', error);
+      throw new Error('無法載入 WhisperTextStreamer，請確保 transformers.js v3+ 已正確載入');
+    }
+  }
+
+  // 收集串流結果
+  let committedText = '';
+  let currentPartial = '';
+  let lastPartialLength = 0; // 記錄上一次 partial 的長度
+  let currentDisplay = ''; // 當前顯示的文字
+  let currentChunkText = ''; // 當前音訊塊的累積文字
+  const allSegments: Array<{ text: string; start: number; end: number }> = [];
+
+  // 創建串流器並設定回調
+  const streamer = new WhisperTextStreamer(resources.pipeline.tokenizer, {
+    // 總是執行內部邏輯，然後呼叫使用者的回調
+    on_chunk_start: () => {
+      currentPartial = '';
+      currentDisplay = '';
+      lastPartialLength = 0;
+      currentChunkText = ''; // 重置當前塊的文字
+
+      whisperEvents.dispatchEvent(new CustomEvent('stream-chunk-start', {
+        detail: { timestamp: Date.now() }
+      }));
+
+      // 如果使用者提供了自訂的 on_chunk_start，也呼叫它
+      if (options?.streamCallbacks?.on_chunk_start) {
+        options.streamCallbacks.on_chunk_start();
+      }
+    },
+
+    callback_function: (partial: string) => {
+      const p = partial || '';
+
+      // 使用長度比較策略判斷是累積還是新詞
+      if (p.length > lastPartialLength) {
+        // 累積模式 - partial 在增長（例如："測" → "測試"）
+        currentDisplay = p;
+      } else {
+        // 新詞模式 - 先提交之前的文字到當前塊
+        if (currentDisplay && currentDisplay.trim()) {
+          // 在當前音訊塊內累積文字（不加空格）
+          currentChunkText += currentDisplay.trim();
+        }
+        // 開始新詞
+        currentDisplay = p;
+      }
+
+      lastPartialLength = p.length;
+
+      // 發送當前的部分結果和已確認的文字
+      // 已確認文字 = 之前的 committedText + 當前塊的累積文字
+      const displayCommitted = committedText + currentChunkText;
+
+      whisperEvents.dispatchEvent(new CustomEvent('stream-partial', {
+        detail: {
+          partial: currentDisplay,
+          committed: displayCommitted
+        }
+      }));
+
+      // 如果使用者提供了自訂的 callback_function，也呼叫它
+      if (options?.streamCallbacks?.callback_function) {
+        options.streamCallbacks.callback_function(partial);
+      }
+    },
+
+    token_callback_function: options?.streamCallbacks?.token_callback_function,
+
+    on_chunk_end: () => {
+      // 提交最後的顯示文字到當前塊
+      if (currentDisplay && currentDisplay.trim()) {
+        currentChunkText += currentDisplay.trim();
+      }
+
+      // 將當前塊的文字加入到已確認文字（音訊塊之間加空格）
+      if (currentChunkText) {
+        if (committedText) {
+          committedText += ' ' + currentChunkText;
+        } else {
+          committedText = currentChunkText;
+        }
+      }
+
+      whisperEvents.dispatchEvent(new CustomEvent('stream-chunk-end', {
+        detail: {
+          committed: committedText,
+          timestamp: Date.now()
+        }
+      }));
+
+      // 如果使用者提供了自訂的 on_chunk_end，也呼叫它
+      if (options?.streamCallbacks?.on_chunk_end) {
+        options.streamCallbacks.on_chunk_end();
+      }
+
+      // 清空當前塊的文字和顯示
+      currentChunkText = '';
+      currentDisplay = '';
+      lastPartialLength = 0;
+    },
+
+    on_finalize: (finalText: string | undefined) => {
+      // 使用提供的最終文字或已累積的文字
+      const finalResult = finalText || committedText || '';
+
+      // 發送事件
+      whisperEvents.dispatchEvent(new CustomEvent('stream-finalize', {
+        detail: {
+          text: finalResult,
+          timestamp: Date.now()
+        }
+      }));
+
+      // 如果使用者提供了自訂的 on_finalize，也呼叫它
+      if (options?.streamCallbacks?.on_finalize) {
+        options.streamCallbacks.on_finalize(finalResult);
+      }
+    }
+  });
+
+  // 準備管道選項
+  const pipelineOptions: any = {
+    // 語言規格
+    ...(options?.language && { language: options.language }),
+
+    // 任務類型（轉錄或翻譯）
+    ...(options?.task && { task: options.task }),
+
+    // 返回片段時間戳
+    return_timestamps: options?.returnSegments ?? false,
+
+    // 串流設定
+    chunk_length_s: options?.chunk_length_s ?? cfg.whisper.streaming.chunkLengthSeconds,
+    stride_length_s: options?.stride_length_s ?? cfg.whisper.streaming.strideLengthSeconds,
+    streamer: streamer,
+
+    // 傳遞任何額外選項
+    ...options,
+  };
+
+  // 執行語音辨識管道（串流模式）
+  const output = await resources.pipeline(audio, pipelineOptions);
+
+  // 格式化結果
+  const result: WhisperResult = {
+    text: output?.text || committedText || '',
+  };
+
+  // 如果請求且可用，添加時間戳片段
+  if (options?.returnSegments && output?.chunks) {
+    result.segments = output.chunks.map((chunk: any) => ({
+      text: chunk.text || '',
+      start: chunk.timestamp?.[0] ?? 0,
+      end: chunk.timestamp?.[1] ?? 0,
+    }));
+  }
+
+  // 發出轉錄完成事件
+  whisperEvents.dispatchEvent(new CustomEvent('transcription-complete', {
+    detail: {
+      text: result.text,
+      duration: startTime ? Date.now() - startTime : 0
+    }
+  }));
+
+  return result;
 }
 
 /**

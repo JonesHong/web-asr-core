@@ -112,21 +112,21 @@ export class ConfigManager {
     hey_jarvis: {
       /**
        * 檢測器模型路徑
-       * @default './models/hey_jarvis_v0.1.onnx'
+       * @default './models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx'
        */
-      detectorPath: './models/hey_jarvis_v0.1.onnx',
+      detectorPath: './models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
       
       /**
        * 梅爾頻譜圖模型路徑
-       * @default './models/melspectrogram.onnx'
+       * @default './models/github/dscripka/openWakeWord/melspectrogram.onnx'
        */
-      melspecPath: './models/melspectrogram.onnx',
+      melspecPath: './models/github/dscripka/openWakeWord/melspectrogram.onnx',
       
       /**
        * 嵌入模型路徑
-       * @default './models/embedding_model.onnx'
+       * @default './models/github/dscripka/openWakeWord/embedding_model.onnx'
        */
-      embeddingPath: './models/embedding_model.onnx',
+      embeddingPath: './models/github/dscripka/openWakeWord/embedding_model.onnx',
       
       /**
        * 喚醒詞觸發閾值（0-1）
@@ -148,21 +148,21 @@ export class ConfigManager {
     hey_mycroft: {
       /**
        * 檢測器模型路徑
-       * @default './models/hey_mycroft_v0.1.onnx'
+       * @default './models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx'
        */
-      detectorPath: './models/hey_mycroft_v0.1.onnx',
+      detectorPath: './models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
       
       /**
        * 梅爾頻譜圖模型路徑（共用）
-       * @default './models/melspectrogram.onnx'
+       * @default './models/github/dscripka/openWakeWord/melspectrogram.onnx'
        */
-      melspecPath: './models/melspectrogram.onnx',
+      melspecPath: './models/github/dscripka/openWakeWord/melspectrogram.onnx',
       
       /**
        * 嵌入模型路徑（共用）
-       * @default './models/embedding_model.onnx'
+       * @default './models/github/dscripka/openWakeWord/embedding_model.onnx'
        */
-      embeddingPath: './models/embedding_model.onnx',
+      embeddingPath: './models/github/dscripka/openWakeWord/embedding_model.onnx',
       
       /**
        * 喚醒詞觸發閾值（0-1）
@@ -183,21 +183,21 @@ export class ConfigManager {
     alexa: {
       /**
        * 檢測器模型路徑
-       * @default './models/alexa_v0.1.onnx'
+       * @default './models/github/dscripka/openWakeWord/alexa_v0.1.onnx'
        */
-      detectorPath: './models/alexa_v0.1.onnx',
+      detectorPath: './models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
       
       /**
        * 梅爾頻譜圖模型路徑（共用）
-       * @default './models/melspectrogram.onnx'
+       * @default './models/github/dscripka/openWakeWord/melspectrogram.onnx'
        */
-      melspecPath: './models/melspectrogram.onnx',
+      melspecPath: './models/github/dscripka/openWakeWord/melspectrogram.onnx',
       
       /**
        * 嵌入模型路徑（共用）
-       * @default './models/embedding_model.onnx'
+       * @default './models/github/dscripka/openWakeWord/embedding_model.onnx'
        */
-      embeddingPath: './models/embedding_model.onnx',
+      embeddingPath: './models/github/dscripka/openWakeWord/embedding_model.onnx',
       
       /**
        * 喚醒詞觸發閾值（0-1）
@@ -346,13 +346,40 @@ export class ConfigManager {
        * @default 30
        */
       chunkSizeSeconds: 30,
-      
+
       /**
        * 塊間重疊長度（秒）
        * @description 防止邊界處的語音被截斷
        * @default 5
        */
       overlapSeconds: 5,
+    },
+
+    /**
+     * 串流轉錄設定
+     * @description 控制 Whisper 的串流轉錄行為
+     */
+    streaming: {
+      /**
+       * 是否啟用串流模式
+       * @description 啟用後會使用 WhisperTextStreamer 進行增量轉錄
+       * @default true
+       */
+      enabled: true,
+
+      /**
+       * 串流塊長度（秒）
+       * @description 每個串流塊的音訊長度
+       * @default 20
+       */
+      chunkLengthSeconds: 20,
+
+      /**
+       * 串流步長（秒）
+       * @description 串流塊之間的重疊長度
+       * @default 5
+       */
+      strideLengthSeconds: 5,
     },
   };
 
@@ -646,6 +673,100 @@ export class ConfigManager {
   };
 
   /**
+   * Speech API 配置
+   * 
+   * @description Web Speech API (TTS/STT) 相關設定
+   */
+  public speech = {
+    /**
+     * TTS（文字轉語音）設定
+     */
+    tts: {
+      /**
+       * 預設語速
+       * @description 範圍 0.1-10，預設 1
+       * @default 1
+       */
+      defaultRate: 1,
+      
+      /**
+       * 預設音調
+       * @description 範圍 0-2，預設 1
+       * @default 1
+       */
+      defaultPitch: 1,
+      
+      /**
+       * 預設音量
+       * @description 範圍 0-1，預設 1
+       * @default 1
+       */
+      defaultVolume: 1,
+      
+      /**
+       * 預設語音
+       * @description 語音名稱或語言代碼，null 表示使用系統預設
+       * @default null
+       */
+      defaultVoice: null as string | null,
+      
+      /**
+       * 優先語言
+       * @description 優先選擇的語言列表
+       * @default ['zh-TW', 'zh-CN', 'en-US']
+       */
+      preferredLanguages: ['zh-TW', 'zh-CN', 'en-US'],
+    },
+    
+    /**
+     * STT（語音轉文字）設定
+     */
+    stt: {
+      /**
+       * 預設語言
+       * @description 識別語言代碼
+       * @default 'zh-TW'
+       */
+      defaultLanguage: 'zh-TW',
+      
+      /**
+       * 是否連續識別
+       * @description 是否持續監聽直到手動停止
+       * @default false
+       */
+      continuous: false,
+      
+      /**
+       * 是否返回暫時結果
+       * @description 是否在識別過程中返回暫時結果
+       * @default true
+       */
+      interimResults: true,
+      
+      /**
+       * 最大替代結果數
+       * @description 返回的最大替代識別結果數量
+       * @default 3
+       */
+      maxAlternatives: 3,
+      
+      /**
+       * 無語音超時
+       * @description 無語音輸入超時時間（毫秒）
+       * @default 5000
+       */
+      noSpeechTimeout: 5000,
+      
+      /**
+       * 最大無語音重試次數
+       * @description 連續無語音的最大重試次數
+       * @default 3
+       */
+      maxNoSpeechRetries: 3,
+    },
+  };
+
+  /**
    * 效能與資源配置
    * 
    * @description 控制資源使用和效能優化的參數
@@ -741,6 +862,9 @@ export class ConfigManager {
       if (overrides.whisper.chunking) {
         Object.assign(this.whisper.chunking, overrides.whisper.chunking);
       }
+      if (overrides.whisper.streaming) {
+        Object.assign(this.whisper.streaming, overrides.whisper.streaming);
+      }
     }
     if (overrides.audio) {
       Object.assign(this.audio, overrides.audio);
@@ -816,6 +940,7 @@ export class ConfigManager {
     this.wakeword = defaultConfig.wakeword;
     this.whisper = defaultConfig.whisper;
     this.audio = defaultConfig.audio;
+    this.speech = defaultConfig.speech;
     this.performance = defaultConfig.performance;
   }
 }

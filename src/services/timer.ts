@@ -1,6 +1,16 @@
 import { ConfigManager } from '../utils/config-manager';
 
 /**
+ * Timer 事件發射器
+ * 
+ * @description 用於發送計時器相關事件，外部可以監聽這些事件進行相應處理
+ * 事件類型：
+ * - 'timeout': 超時事件 { duration: number, timestamp: number }
+ * - 'processing-error': 處理錯誤 { error: Error, context: string }
+ */
+export const timerEvents = new EventTarget();
+
+/**
  * Timer 狀態
  */
 export interface TimerState {
@@ -67,9 +77,6 @@ export class Timer {
      * @returns 新狀態
      */
     static start(state: TimerState, params?: Partial<TimerParams>, config?: ConfigManager): TimerState {
-        const defaultParams = this.getDefaultParams(config);
-        const finalParams = { ...defaultParams, ...params };
-        
         // 如果已經在運行，直接返回
         if (state.isRunning) {
             return state;
@@ -77,10 +84,11 @@ export class Timer {
 
         const now = Date.now();
         
+        // 保持原本的 totalTime，只在暫停恢復時使用 pausedAt
         return {
             isRunning: true,
-            remainingTime: state.pausedAt ?? finalParams.duration,
-            totalTime: finalParams.duration,
+            remainingTime: state.pausedAt ?? state.remainingTime,
+            totalTime: state.totalTime,  // 保持原本的 totalTime
             startTime: now,
             pausedAt: undefined
         };
@@ -138,11 +146,14 @@ export class Timer {
 
         const now = Date.now();
         const elapsed = now - state.startTime;
+        
+        // 直接從剩餘時間減去經過的時間
         const remaining = Math.max(0, state.remainingTime - elapsed);
 
         const newState: TimerState = {
             ...state,
-            remainingTime: remaining
+            remainingTime: remaining,
+            startTime: now  // 更新 startTime 為當前時間，用於下一次 tick 計算
         };
 
         // 檢查是否超時
@@ -152,6 +163,14 @@ export class Timer {
             // 超時時自動停止
             newState.isRunning = false;
             newState.startTime = undefined;
+            
+            // 發出超時事件
+            timerEvents.dispatchEvent(new CustomEvent('timeout', {
+                detail: {
+                    duration: state.totalTime,
+                    timestamp: now
+                }
+            }));
         }
 
         return { state: newState, timeout };
@@ -247,34 +266,45 @@ export class TimerManager {
      * @param id 計時器 ID
      */
     startTimer(id: string): void {
-        const timer = this.timers.get(id);
-        if (!timer) return;
+        try {
+            const timer = this.timers.get(id);
+            if (!timer) return;
 
-        timer.state = Timer.start(timer.state, timer.params);
+            timer.state = Timer.start(timer.state, timer.params);
 
-        // 設定自動 tick
-        if (timer.intervalId) {
-            clearInterval(timer.intervalId);
-        }
-
-        const tickInterval = timer.params.tickInterval ?? 100;
-        timer.intervalId = window.setInterval(() => {
-            const result = Timer.tick(timer.state);
-            timer.state = result.state;
-
-            // 觸發 tick 回調
-            if (timer.params.onTick) {
-                timer.params.onTick(Timer.getRemainingTime(timer.state));
+            // 設定自動 tick
+            if (timer.intervalId) {
+                clearInterval(timer.intervalId);
             }
 
-            // 觸發超時回調
-            if (result.timeout) {
-                if (timer.params.onTimeout) {
-                    timer.params.onTimeout();
+            const tickInterval = timer.params.tickInterval ?? 100;
+            timer.intervalId = window.setInterval(() => {
+                const result = Timer.tick(timer.state);
+                timer.state = result.state;
+
+                // 觸發 tick 回調
+                if (timer.params.onTick) {
+                    timer.params.onTick(Timer.getRemainingTime(timer.state));
                 }
-                this.stopTimer(id);
-            }
-        }, tickInterval);
+
+                // 觸發超時回調
+                if (result.timeout) {
+                    if (timer.params.onTimeout) {
+                        timer.params.onTimeout();
+                    }
+                    this.stopTimer(id);
+                }
+            }, tickInterval);
+        } catch (error) {
+            // 發出處理錯誤事件
+            timerEvents.dispatchEvent(new CustomEvent('processing-error', {
+                detail: {
+                    error: error as Error,
+                    context: 'startTimer'
+                }
+            }));
+            throw error;
+        }
     }
 
     /**

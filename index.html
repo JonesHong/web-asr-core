@@ -117,20 +117,30 @@
         .custom-scrollbar {
             scrollbar-width: thin;
             scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+            scrollbar-gutter: stable;
         }
         .custom-scrollbar::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
         }
         .custom-scrollbar::-webkit-scrollbar-track {
-            background: transparent;
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 3px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb {
             background-color: rgba(156, 163, 175, 0.5);
-            border-radius: 4px;
+            border-radius: 3px;
         }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
             background-color: rgba(156, 163, 175, 0.7);
+        }
+        
+        /* 日誌文字換行 */
+        .log-entry {
+            word-break: break-word;
+            overflow-wrap: break-word;
+            max-width: 100%;
+            display: block;
         }
     </style>
 </head>
@@ -198,32 +208,49 @@
                 <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl flex-1 flex flex-col min-h-0">
                 <!-- 分頁標籤 -->
                 <div class="flex border-b border-gray-200">
-                    <button class="tab-button active px-6 py-3 font-semibold text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50 transition-all" data-tab="vad">
-                        <i class="fas fa-wave-square mr-2"></i>VAD 檢測
-                    </button>
-                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="wakeword">
-                        <i class="fas fa-bell mr-2"></i>喚醒詞
-                    </button>
-                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="whisper">
-                        <i class="fas fa-closed-captioning mr-2"></i>Whisper
-                    </button>
-                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="buffer">
-                        <i class="fas fa-tools mr-2"></i>音訊工具
-                    </button>
-                    <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="timer">
-                        <i class="fas fa-stopwatch mr-2"></i>倒數計時
-                    </button>
-                    <!-- 預留空間給新的檢測項目 -->
+                    <!-- 第一頁分頁 -->
+                    <div id="page1-tabs" class="flex">
+                        <button class="tab-button active px-6 py-3 font-semibold text-indigo-600 border-b-2 border-indigo-600 bg-indigo-50 transition-all" data-tab="speech">
+                            <i class="fas fa-microphone-lines mr-2"></i>Speech API
+                        </button>
+                        <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="whisper">
+                            <i class="fas fa-closed-captioning mr-2"></i>Whisper
+                        </button>
+                        <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="vad">
+                            <i class="fas fa-wave-square mr-2"></i>VAD 檢測
+                        </button>
+                        <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="wakeword">
+                            <i class="fas fa-bell mr-2"></i>喚醒詞
+                        </button>
+                    </div>
+                    
+                    <!-- 第二頁分頁（預設隱藏） -->
+                    <div id="page2-tabs" class="flex hidden">
+                        <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="timer">
+                            <i class="fas fa-stopwatch mr-2"></i>倒數計時
+                        </button>
+                        <button class="tab-button px-6 py-3 font-semibold text-gray-600 hover:text-indigo-600 hover:bg-gray-50 transition-all" data-tab="buffer">
+                            <i class="fas fa-tools mr-2"></i>音訊工具
+                        </button>
+                    </div>
+                    
+                    <!-- 分頁控制按鈕 -->
                     <div class="flex-1"></div>
-                    <button class="px-4 py-2 text-gray-400 hover:text-gray-600 transition-all" title="更多檢測項目即將推出">
-                        <i class="fas fa-plus-circle"></i>
-                    </button>
+                    <div class="flex items-center gap-2 px-3">
+                        <button id="prevPageBtn" class="px-3 py-1 text-gray-400 hover:text-gray-600 transition-all disabled:opacity-30 disabled:cursor-not-allowed" title="上一頁" disabled>
+                            <i class="fas fa-chevron-left"></i>
+                        </button>
+                        <span id="pageIndicator" class="text-sm text-gray-500">1 / 2</span>
+                        <button id="nextPageBtn" class="px-3 py-1 text-gray-600 hover:text-gray-800 transition-all disabled:opacity-30 disabled:cursor-not-allowed" title="下一頁">
+                            <i class="fas fa-chevron-right"></i>
+                        </button>
+                    </div>
                 </div>
 
                 <!-- 分頁內容區域 -->
                 <div class="flex-1 p-6 min-h-0 flex flex-col">
                     <!-- VAD 分頁內容 -->
-                    <div id="tab-vad" class="tab-content flex flex-col h-full">
+                    <div id="tab-vad" class="tab-content hidden flex-col h-full">
                         <!-- 控制區域 -->
                         <div class="flex gap-3 mb-4">
                             <button id="vadStartBtn"
@@ -275,12 +302,26 @@
                                        hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                                 <i class="fas fa-stop mr-2"></i>停止
                             </button>
-                            <select id="wakewordSelect" class="ml-auto px-4 py-2 border border-purple-300 rounded-lg font-medium
+                            <select id="wakewordSelect" class="px-4 py-2 border border-purple-300 rounded-lg font-medium
                                        focus:outline-none focus:ring-2 focus:ring-purple-400" disabled>
                                 <option value="hey-jarvis">Hey Jarvis</option>
                                 <option value="hey-mycroft">Hey Mycroft</option>
                                 <option value="alexa">Alexa</option>
+                                <option value="custom">自訂模型</option>
                             </select>
+                            
+                            <!-- 自訂模型上傳 -->
+                            <div class="ml-auto flex gap-2">
+                                <input type="file" 
+                                    id="customWakewordInput" 
+                                    accept=".onnx"
+                                    class="hidden">
+                                <button id="uploadWakewordBtn"
+                                    class="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium
+                                           hover:bg-indigo-700 transition-colors">
+                                    <i class="fas fa-upload mr-2"></i>上傳 ONNX
+                                </button>
+                            </div>
                         </div>
 
                         <!-- 音訊視覺化 -->
@@ -290,6 +331,20 @@
                         <div id="wakewordStatus"
                             class="px-4 py-3 bg-purple-50 rounded-lg border-l-4 border-purple-400 font-medium mb-4 text-purple-800">
                             等待模型載入...
+                        </div>
+                        
+                        <!-- 自訂模型資訊 -->
+                        <div id="customModelInfo" class="hidden px-4 py-3 bg-indigo-50 rounded-lg border-l-4 border-indigo-400 mb-4">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h4 class="text-indigo-800 font-semibold text-sm">自訂模型</h4>
+                                    <p id="customModelName" class="text-indigo-600 text-xs mt-1"></p>
+                                </div>
+                                <button id="removeCustomModelBtn"
+                                    class="text-red-500 hover:text-red-700 text-sm">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
                         </div>
 
                         <!-- 日誌區域 -->
@@ -308,6 +363,109 @@
 
                     <!-- Whisper 分頁內容 -->
                     <div id="tab-whisper" class="tab-content hidden flex-col h-full">
+                        <!-- 模型設定區域 -->
+                        <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                            <h3 class="text-gray-700 font-semibold mb-3">
+                                <i class="fas fa-cog mr-2"></i>模型設定
+                            </h3>
+
+                            <!-- 模型來源選擇 -->
+                            <div class="mb-3">
+                                <label class="text-sm font-medium text-gray-600 mb-2 block">模型來源</label>
+                                <div class="flex gap-4">
+                                    <label class="flex items-center cursor-pointer">
+                                        <input type="radio" name="whisperSource" value="local"
+                                               class="mr-2 text-indigo-600 focus:ring-indigo-500" checked>
+                                        <span class="text-gray-700">本地模型</span>
+                                    </label>
+                                    <label class="flex items-center cursor-pointer">
+                                        <input type="radio" name="whisperSource" value="remote"
+                                               class="mr-2 text-indigo-600 focus:ring-indigo-500">
+                                        <span class="text-gray-700">遠端模型 (HuggingFace)</span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <!-- 本地模型選擇 -->
+                            <div id="whisperLocalSettings" class="mb-3">
+                                <label class="text-sm font-medium text-gray-600 mb-2 block">選擇本地模型</label>
+                                <div class="flex gap-2">
+                                    <select id="whisperLocalModel"
+                                            class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                        <option value="">載入中...</option>
+                                    </select>
+                                    <button id="whisperRefreshLocal"
+                                            class="px-3 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
+                                            title="重新整理本地模型列表">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
+                                </div>
+                                <small class="text-xs text-gray-500 mt-1 block">
+                                    基礎路徑: /models/huggingface/Xenova/
+                                </small>
+                            </div>
+
+                            <!-- 遠端模型輸入 -->
+                            <div id="whisperRemoteSettings" class="mb-3 hidden">
+                                <label class="text-sm font-medium text-gray-600 mb-2 block">HuggingFace 模型 ID</label>
+                                <div class="relative">
+                                    <input type="text" id="whisperRemoteModel"
+                                           placeholder="例如: Xenova/whisper-tiny"
+                                           class="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                    <!-- 相容性指示器 -->
+                                    <div id="whisperCompatibilityIndicator" class="absolute right-2 top-1/2 transform -translate-y-1/2">
+                                        <!-- 將由 JavaScript 動態更新 -->
+                                    </div>
+                                </div>
+                                <small id="whisperCompatibilityMessage" class="text-xs mt-1 block">
+                                    將從 HuggingFace 下載並快取於瀏覽器
+                                </small>
+
+                                <!-- 建議的相容模型列表 -->
+                                <div id="whisperSuggestedModels" class="mt-2 p-2 bg-blue-50 rounded-lg hidden">
+                                    <p class="text-xs font-medium text-blue-800 mb-1">建議使用的相容模型：</p>
+                                    <div class="grid grid-cols-2 gap-1 text-xs">
+                                        <button class="text-left px-2 py-1 hover:bg-blue-100 rounded cursor-pointer text-blue-600" data-model="Xenova/whisper-tiny">
+                                            Xenova/whisper-tiny (39MB)
+                                        </button>
+                                        <button class="text-left px-2 py-1 hover:bg-blue-100 rounded cursor-pointer text-blue-600" data-model="Xenova/whisper-small">
+                                            Xenova/whisper-small (244MB)
+                                        </button>
+                                        <button class="text-left px-2 py-1 hover:bg-blue-100 rounded cursor-pointer text-blue-600" data-model="Xenova/whisper-base">
+                                            Xenova/whisper-base (74MB)
+                                        </button>
+                                        <button class="text-left px-2 py-1 hover:bg-blue-100 rounded cursor-pointer text-blue-600" data-model="Xenova/whisper-medium">
+                                            Xenova/whisper-medium (769MB)
+                                        </button>
+                                        <button class="text-left px-2 py-1 hover:bg-blue-100 rounded cursor-pointer text-blue-600" data-model="Xenova/whisper-large-v3">
+                                            Xenova/whisper-large-v3 (1550MB)
+                                        </button>
+                                        <button class="text-left px-2 py-1 hover:bg-blue-100 rounded cursor-pointer text-blue-600" data-model="Xenova/distil-whisper-large-v3">
+                                            Xenova/distil-whisper-large-v3 (756MB)
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 套用按鈕 -->
+                            <div class="flex items-center gap-3">
+                                <button id="whisperApplyModel"
+                                        class="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <i class="fas fa-check mr-2"></i>套用模型
+                                </button>
+                                <button id="whisperCancelLoad"
+                                        class="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg font-medium hover:bg-gray-400 transition-colors hidden">
+                                    <i class="fas fa-times mr-2"></i>取消
+                                </button>
+                                <!-- 載入進度條 -->
+                                <div id="whisperLoadProgress" class="flex-1 hidden">
+                                    <div class="bg-gray-200 rounded-full h-2">
+                                        <div id="whisperProgressBar" class="bg-indigo-600 h-2 rounded-full transition-all" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- 控制區域 -->
                         <div class="flex gap-3 mb-4">
                             <button id="whisperRecordBtn"
@@ -325,6 +483,20 @@
                                        hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
                                 <i class="fas fa-language mr-2"></i>轉譯成文字
                             </button>
+
+                            <!-- 串流模式切換 -->
+                            <div class="ml-auto flex items-center gap-2">
+                                <label class="text-gray-600 text-sm font-medium">串流模式：</label>
+                                <label class="relative inline-flex items-center cursor-pointer">
+                                    <input type="checkbox" id="whisperStreamingToggle" class="sr-only peer" checked>
+                                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300
+                                            rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white
+                                            after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white
+                                            after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all
+                                            peer-checked:bg-blue-600"></div>
+                                    <span class="ml-2 text-sm font-medium text-gray-700" id="whisperStreamingLabel">啟用</span>
+                                </label>
+                            </div>
                         </div>
 
                         <!-- 音訊視覺化 -->
@@ -660,41 +832,285 @@
                             </div>
                         </div>
                     </div>
+                    
+                    <!-- Speech API 分頁內容 (預設顯示) -->
+                    <div id="tab-speech" class="tab-content flex flex-col h-full">
+                        <!-- TTS 控制區域 -->
+                        <div class="border-b border-gray-200 pb-3 mb-3">
+                            <h3 class="text-lg font-semibold text-gray-700 mb-3">
+                                <i class="fas fa-volume-up mr-2 text-blue-600"></i>文字轉語音 (TTS)
+                            </h3>
+                            <div class="space-y-3">
+                                <!-- 文字輸入 -->
+                                <div class="flex gap-2">
+                                    <input type="text" id="ttsTextInput" 
+                                        placeholder="請輸入要說的文字..." 
+                                        value="你好，歡迎使用 WebASRCore 語音服務！"
+                                        class="flex-1 px-3 py-2 border border-gray-300 rounded-lg
+                                               focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                    <button id="ttsSpeakBtn"
+                                        class="px-4 py-2 bg-blue-600 text-white rounded-lg font-medium
+                                               hover:bg-blue-700 transition-colors whitespace-nowrap">
+                                        <i class="fas fa-play mr-2"></i>說話
+                                    </button>
+                                    <button id="ttsPauseBtn"
+                                        class="px-4 py-2 bg-yellow-600 text-white rounded-lg font-medium
+                                               hover:bg-yellow-700 transition-colors whitespace-nowrap" disabled>
+                                        <i class="fas fa-pause mr-2"></i>暫停
+                                    </button>
+                                    <button id="ttsStopBtn"
+                                        class="px-4 py-2 bg-red-600 text-white rounded-lg font-medium
+                                               hover:bg-red-700 transition-colors whitespace-nowrap" disabled>
+                                        <i class="fas fa-stop mr-2"></i>停止
+                                    </button>
+                                </div>
+                                
+                                <!-- TTS 設定 -->
+                                <div class="flex flex-wrap gap-4">
+                                    <!-- 語音選擇 -->
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-sm text-gray-600 whitespace-nowrap">語音:</label>
+                                        <select id="ttsVoiceSelect" 
+                                            class="px-3 py-1 border border-gray-300 rounded text-sm
+                                                   focus:ring-2 focus:ring-blue-500 focus:outline-none min-w-[150px]">
+                                            <option value="">預設</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <!-- 速率 -->
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-sm text-gray-600 whitespace-nowrap">速率:</label>
+                                        <input type="range" id="ttsRateSlider" 
+                                            min="0.5" max="2" step="0.1" value="1"
+                                            class="w-20">
+                                        <span id="ttsRateValue" class="text-sm text-gray-700 w-8">1.0</span>
+                                    </div>
+                                    
+                                    <!-- 音調 -->
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-sm text-gray-600 whitespace-nowrap">音調:</label>
+                                        <input type="range" id="ttsPitchSlider" 
+                                            min="0.5" max="2" step="0.1" value="1"
+                                            class="w-20">
+                                        <span id="ttsPitchValue" class="text-sm text-gray-700 w-8">1.0</span>
+                                    </div>
+                                    
+                                    <!-- 音量 -->
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-sm text-gray-600 whitespace-nowrap">音量:</label>
+                                        <input type="range" id="ttsVolumeSlider" 
+                                            min="0" max="1" step="0.1" value="1"
+                                            class="w-20">
+                                        <span id="ttsVolumeValue" class="text-sm text-gray-700 w-8">1.0</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- STT 控制區域 -->
+                        <div class="border-b border-gray-200 pb-3 mb-3">
+                            <h3 class="text-lg font-semibold text-gray-700 mb-3">
+                                <i class="fas fa-microphone mr-2 text-green-600"></i>語音轉文字 (STT)
+                            </h3>
+                            <div class="space-y-3">
+                                <!-- STT 控制按鈕 -->
+                                <div class="flex flex-wrap gap-2">
+                                    <button id="sttStartBtn"
+                                        class="px-4 py-2 bg-green-600 text-white rounded-lg font-medium
+                                               hover:bg-green-700 transition-colors whitespace-nowrap">
+                                        <i class="fas fa-microphone mr-2"></i>開始識別
+                                    </button>
+                                    <button id="sttStopBtn"
+                                        class="px-4 py-2 bg-red-600 text-white rounded-lg font-medium
+                                               hover:bg-red-700 transition-colors whitespace-nowrap" disabled>
+                                        <i class="fas fa-stop mr-2"></i>停止識別
+                                    </button>
+                                </div>
+                                
+                                <!-- STT 設定 -->
+                                <div class="flex flex-wrap items-center gap-3">
+                                    <div class="flex items-center gap-2">
+                                        <label class="text-sm text-gray-600 whitespace-nowrap">語言:</label>
+                                        <select id="sttLangSelect" 
+                                            class="px-3 py-1 border border-gray-300 rounded text-sm
+                                                   focus:ring-2 focus:ring-green-500 focus:outline-none">
+                                            <option value="zh-TW">中文（繁體）</option>
+                                            <option value="zh-CN">中文（簡體）</option>
+                                            <option value="en-US">English (US)</option>
+                                            <option value="en-GB">English (UK)</option>
+                                            <option value="ja-JP">日本語</option>
+                                            <option value="ko-KR">한국어</option>
+                                        </select>
+                                    </div>
+                                    
+                                    <label class="flex items-center gap-1 text-sm text-gray-600 whitespace-nowrap">
+                                        <input type="checkbox" id="sttContinuousCheck" class="rounded">
+                                        連續識別
+                                    </label>
+                                    
+                                    <label class="flex items-center gap-1 text-sm text-gray-600 whitespace-nowrap">
+                                        <input type="checkbox" id="sttInterimCheck" checked class="rounded">
+                                        顯示暫時結果
+                                    </label>
+                                </div>
+                                
+                                <!-- STT 結果顯示 -->
+                                <div class="bg-gray-50 rounded-lg p-3 min-h-[80px]">
+                                    <div class="text-sm text-gray-500 mb-1">識別結果：</div>
+                                    <div id="sttResult" class="text-gray-800">
+                                        <span class="text-gray-400">等待開始語音識別...</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 狀態顯示 -->
+                        <div class="grid grid-cols-2 gap-3 mb-3">
+                            <div id="ttsStatus" class="bg-blue-50 rounded-lg p-3 border-l-4 border-blue-400">
+                                <div class="text-blue-800 font-medium text-sm">TTS 狀態：就緒</div>
+                            </div>
+                            <div id="sttStatus" class="bg-green-50 rounded-lg p-3 border-l-4 border-green-400">
+                                <div class="text-green-800 font-medium text-sm">STT 狀態：就緒</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 事件日誌 -->
+                        <div class="flex-1 bg-gray-900 rounded-lg p-4 min-h-0 flex flex-col">
+                            <div class="flex items-center justify-between mb-2">
+                                <h3 class="text-gray-400 font-semibold text-sm">事件日誌</h3>
+                                <button onclick="document.getElementById('speechLog').innerHTML = ''" 
+                                    class="text-gray-500 hover:text-gray-300 text-xs">
+                                    <i class="fas fa-trash"></i> 清除
+                                </button>
+                            </div>
+                            <div id="speechLog" class="h-full overflow-y-auto overflow-x-hidden custom-scrollbar text-gray-200 font-mono text-sm space-y-1 pr-2" style="word-break: break-word; overflow-wrap: break-word;">
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 載入依賴庫 -->
-    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
-    <!-- <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script> -->
+    <!-- 載入依賴庫：優先使用 node_modules，CDN 作為備案 -->
     <script>
-        // 設定 ONNX Runtime WASM 路徑
-        if (window.ort) {
-            ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
-            console.log('ONNX Runtime Web 已載入，版本:', ort.env.versions.web);
-        }
+        // 動態載入 ONNX Runtime Web
+        (async function loadONNXRuntime() {
+            try {
+                // 優先嘗試從 node_modules 載入
+                const script = document.createElement('script');
+                script.src = './node_modules/onnxruntime-web/dist/ort.min.js';
+                
+                await new Promise((resolve, reject) => {
+                    script.onload = resolve;
+                    script.onerror = reject;
+                    document.head.appendChild(script);
+                });
+                
+                if (window.ort) {
+                    ort.env.wasm.wasmPaths = './node_modules/onnxruntime-web/dist/';
+                    console.log('ONNX Runtime Web 已從 node_modules 載入，版本:', ort.env.versions.web);
+                }
+            } catch (error) {
+                console.warn('無法從 node_modules 載入 ONNX Runtime，改用 CDN:', error);
+                
+                // 備案：從 CDN 載入
+                const cdnScript = document.createElement('script');
+                cdnScript.src = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js';
+                
+                await new Promise((resolve) => {
+                    cdnScript.onload = resolve;
+                    document.head.appendChild(cdnScript);
+                });
+                
+                if (window.ort) {
+                    ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
+                    console.log('ONNX Runtime Web 已從 CDN 載入，版本:', ort.env.versions.web);
+                }
+            }
+        })();
     </script>
     
     <script type="module">
-        // 動態載入 transformers.js
-        import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+        // 動態載入 transformers.js：優先 node_modules，CDN 備案
+        async function loadTransformers() {
+            let pipeline, env, WhisperTextStreamer;
 
-        // 設定 transformers.js 環境
-        env.allowLocalModels = true;
-        env.allowRemoteModels = false;  // 禁止從 HuggingFace 下載
-        env.localModelPath = '../models/huggingface/';  // 設定本地模型基礎路徑
+            try {
+                // 優先嘗試從 node_modules 載入
+                const module = await import('./node_modules/@huggingface/transformers/dist/transformers.min.js');
+                pipeline = module.pipeline;
+                env = module.env;
+                WhisperTextStreamer = module.WhisperTextStreamer;
+                console.log('Transformers.js 已從 node_modules 載入');
+
+                // 使用物件對映方式指定 WASM 檔案路徑
+                env.backends = env.backends || {};
+                env.backends.onnx = env.backends.onnx || {};
+                env.backends.onnx.wasm = env.backends.onnx.wasm || {};
+                env.backends.onnx.wasm.wasmPaths = {
+                    'ort-wasm-simd-threaded.jsep.mjs':  './public/ort/ort-wasm-simd-threaded.jsep.mjs',
+                    'ort-wasm-simd-threaded.jsep.wasm': './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm.wasm':                    './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm-simd.wasm':               './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm-simd-threaded.wasm':      './public/ort/ort-wasm-simd-threaded.wasm'
+                };
+            } catch (error) {
+                console.warn('無法從 node_modules 載入 Transformers.js，改用 CDN:', error);
+
+                // 備案：從 CDN 載入 @huggingface/transformers v3
+                const cdnModule = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3');
+                pipeline = cdnModule.pipeline;
+                env = cdnModule.env;
+                WhisperTextStreamer = cdnModule.WhisperTextStreamer;
+                console.log('Transformers.js 已從 CDN 載入');
+
+                // 設定 WASM 路徑為 onnxruntime-web CDN
+                env.backends = env.backends || {};
+                env.backends.onnx = env.backends.onnx || {};
+                env.backends.onnx.wasm = env.backends.onnx.wasm || {};
+                env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/';
+            }
+
+            // 根據情況決定使用本地還是遠端模式
+            // 這裡預設使用遠端模式，但可以在需要時切換為本地模式
+            const useLocalModels = false;  // 可以根據需要修改此設定
+
+            if (useLocalModels) {
+                // 本地模式設定
+                env.allowLocalModels = true;
+                env.localModelPath = './models/';
+                env.allowRemoteModels = false;
+            } else {
+                // 遠端模式設定（預設）
+                env.allowLocalModels = false;
+                env.remoteHost = 'https://huggingface.co';
+                env.remotePathTemplate = '{model}/resolve/{revision}/';
+                env.allowRemoteModels = true;
+            }
+
+            // 設定 cache 位置（避免重複下載）
+            env.cacheDir = './.cache/';
+            env.useBrowserCache = true;
+
+            // 最終設定 WASM 路徑 - 優先使用本地 public/ort
+            if (!env.backends.onnx.wasm.wasmPaths || typeof env.backends.onnx.wasm.wasmPaths === 'string') {
+                // 如果還沒設定或是字串路徑，改用物件對映
+                env.backends.onnx.wasm.wasmPaths = {
+                    'ort-wasm-simd-threaded.jsep.mjs':  './public/ort/ort-wasm-simd-threaded.jsep.mjs',
+                    'ort-wasm-simd-threaded.jsep.wasm': './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm.wasm':                    './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm-simd.wasm':               './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm-simd-threaded.wasm':      './public/ort/ort-wasm-simd-threaded.wasm'
+                };
+            }
+
+            // 將 transformers 加到全域供 WebASRCore 使用
+            window.transformers = { pipeline, env, WhisperTextStreamer };
+        }
         
-        // 設定 WASM 路徑
-        env.backends = env.backends || {};
-        env.backends.onnx = env.backends.onnx || {};
-        env.backends.onnx.wasm = env.backends.onnx.wasm || {};
-        env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/';
-        
-        // 將 transformers 加到全域供 WebASRCore 使用
-        window.transformers = { pipeline, env };
-        console.log('Transformers.js 已載入');
+        await loadTransformers();
     </script>
 
     <!-- 主程式 -->

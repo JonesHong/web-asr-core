@@ -21,8 +21,27 @@ export interface WhisperResources {
 }
 
 /**
+ * Whisper 串流回調介面
+ *
+ * @description WhisperTextStreamer 的回調函數介面
+ * @interface WhisperStreamCallbacks
+ */
+export interface WhisperStreamCallbacks {
+  /** 串流塊開始時觸發 */
+  on_chunk_start?: () => void;
+  /** 接收到部分文字時觸發 */
+  callback_function?: (partial: string) => void;
+  /** 接收到 token 時觸發 */
+  token_callback_function?: (token: any) => void;
+  /** 串流塊結束時觸發 */
+  on_chunk_end?: () => void;
+  /** 最終完成時觸發 */
+  on_finalize?: (finalText: string) => void;
+}
+
+/**
  * Whisper 轉錄選項
- * 
+ *
  * @description 配置 Whisper 轉錄行為的選項
  * @interface WhisperOptions
  */
@@ -33,6 +52,14 @@ export interface WhisperOptions {
   task?: 'transcribe' | 'translate';
   /** 是否返回時間戳片段 */
   returnSegments?: boolean;
+  /** 是否啟用串流模式 */
+  streaming?: boolean;
+  /** 串流回調函數 */
+  streamCallbacks?: WhisperStreamCallbacks;
+  /** 串流塊長度（秒） */
+  chunk_length_s?: number;
+  /** 串流步長（秒） */
+  stride_length_s?: number;
   /** 管線的其他選項 */
   [key: string]: any;
 }
@@ -74,4 +101,6 @@ export interface WhisperLoadOptions {
   device?: 'webgpu' | 'wasm' | 'auto';
   /** 資料類型：'fp32' 全精度、'fp16' 半精度、'q8' 8位量化、'q4' 4位量化 */
   dtype?: 'fp32' | 'fp16' | 'q8' | 'q4';
+  /** 進度回調函數 */
+  progress_callback?: (data: any) => void;
 }

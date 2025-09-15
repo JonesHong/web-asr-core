@@ -81,7 +81,18 @@ async function getOrt(): Promise<typeof import('onnxruntime-web')> {
  * ```
  */
 export async function initializeOrt(): Promise<void> {
-  await getOrt();
+  const ort = await getOrt();
+  
+  // 設置正確的 WASM 路徑
+  if (ort.env && ort.env.wasm) {
+    if (typeof window !== 'undefined') {
+      // 在瀏覽器環境中，使用相對路徑
+      ort.env.wasm.wasmPaths = '/node_modules/onnxruntime-web/dist/';
+      // 啟用 SIMD 和多線程
+      ort.env.wasm.simd = true;
+      ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+    }
+  }
 }
 
 /**
@@ -188,6 +199,15 @@ export async function createSession(
   try {
     // 獲取 ONNX Runtime 實例
     const ort = await getOrt();
+    
+    // 設置正確的 WASM 路徑
+    if (ort.env && ort.env.wasm) {
+      // 確保 WASM 路徑正確設置
+      if (typeof window !== 'undefined') {
+        // 在瀏覽器環境中，使用相對路徑
+        ort.env.wasm.wasmPaths = '/node_modules/onnxruntime-web/dist/';
+      }
+    }
     
     // 載入模型資料
     const modelData = await loadOnnxFromUrl(modelUrl);

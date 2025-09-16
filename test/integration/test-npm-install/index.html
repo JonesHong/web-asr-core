@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebASRCore NPM Test (Vite)</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com" data-tailwind-mode="dev"></script>
+
+    <!-- Tailwind CSS 配置 -->
+    <script>
+        // 抑制 Tailwind CDN 生產環境警告（開發環境使用）
+        if (window.tailwind) {
+            tailwind.config = {
+                // 停用生產環境警告
+                future: {
+                    hoverOnlyWhenSupported: true,
+                },
+            }
+        }
+
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    animation: {
+                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'fade-in': 'fadeIn 0.3s ease-in-out',
+                        'slide-in': 'slideIn 0.3s ease-out',
+                        'spin': 'spin 1s linear infinite'
+                    },
+                    keyframes: {
+                        fadeIn: {
+                            '0%': { opacity: '0' },
+                            '100%': { opacity: '1' }
+                        },
+                        slideIn: {
+                            '0%': { opacity: '0', transform: 'translateX(-20px)' },
+                            '100%': { opacity: '1', transform: 'translateX(0)' }
+                        }
+                    },
+                    height: {
+                        'screen-90': '90vh',
+                        'screen-85': '85vh',
+                        'screen-80': '80vh'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- 分頁系統樣式 -->
+    <style>
+        .tab-button {
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .tab-button.active {
+            color: #4f46e5;
+            background-color: #eef2ff;
+            border-bottom: 2px solid #4f46e5;
+        }
+
+        .tab-button:not(.active):hover {
+            background-color: #f9fafb;
+        }
+
+        .tab-content {
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        .tab-content.hidden {
+            display: none !important;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* 診斷區塊特殊捲動條 */
+        .diagnostic-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(34, 211, 238, 0.3) rgba(6, 182, 212, 0.1);
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar-track {
+            background: rgba(6, 182, 212, 0.1);
+            border-radius: 3px;
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar-thumb {
+            background-color: rgba(34, 211, 238, 0.5);
+            border-radius: 3px;
+        }
+        .diagnostic-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(34, 211, 238, 0.7);
+        }
+
+        /* 一般捲動條 */
+        .custom-scrollbar {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+            scrollbar-gutter: stable;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background-color: rgba(156, 163, 175, 0.5);
+            border-radius: 3px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background-color: rgba(156, 163, 175, 0.7);
+        }
+
+        /* 日誌文字換行 */
+        .log-entry {
+            word-break: break-word;
+            overflow-wrap: break-word;
+            max-width: 100%;
+            display: block;
+        }
+    </style>
+</head>
+
+<body class="h-screen bg-gradient-to-br from-purple-500 via-indigo-600 to-blue-700 overflow-hidden">
+    <div class="h-full flex flex-col p-4 max-w-7xl mx-auto">
+        <!-- 標題區域 - 固定高度 -->
+        <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl p-4 mb-4 flex-shrink-0">
+            <h1 class="text-2xl sm:text-3xl font-bold text-gray-800 flex items-center gap-3">
+                <i class="fas fa-microphone-alt text-indigo-600"></i>
+                WebASRCore NPM 測試 (Vite)
+                <span class="text-sm bg-green-100 text-green-800 px-2 py-1 rounded">v0.7.1</span>
+            </h1>
+        </div>
+
+        <!-- 主要內容區域 - 兩欄佈局 -->
+        <div class="flex-1 flex flex-col lg:flex-row gap-4 min-h-0 items-stretch">
+            <!-- 左側：模型初始化與系統診斷 (40%) -->
+            <div class="lg:w-2/5 flex flex-col gap-4 min-h-0 min-w-0">
+                <!-- 模型初始化區塊 -->
+                <div class="bg-gradient-to-r from-indigo-500 to-purple-600 rounded-xl p-4 shadow-2xl">
+                    <div class="flex items-center justify-between mb-3">
+                        <div class="flex items-center gap-3 text-white">
+                            <i class="fas fa-box text-xl"></i>
+                            <h2 class="text-lg font-semibold">模型初始化</h2>
+                        </div>
+                        <button id="initBtn" class="px-4 py-1.5 bg-white text-indigo-600 text-sm font-semibold rounded-lg
+                                       hover:bg-gray-100 transition-all duration-200 transform hover:scale-105
+                                       disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none">
+                            <i class="fas fa-download mr-1"></i>載入
+                        </button>
+                    </div>
+                    <div id="initStatus" class="p-2 bg-white/20 backdrop-blur-sm rounded-lg text-white text-sm">
+                        點擊載入模型以開始測試
+                    </div>
+                    <div id="initLoading" class="hidden mt-2">
+                        <div class="flex items-center gap-2 text-white text-sm">
+                            <div class="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            <span>正在載入模型...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 系統診斷區塊 -->
+                <div class="bg-gradient-to-r from-teal-500 to-cyan-600 rounded-xl p-3 shadow-2xl flex-1 flex flex-col min-h-0">
+                    <div class="flex items-center justify-between mb-2 flex-shrink-0">
+                        <div class="flex items-center gap-3 text-white">
+                            <i class="fas fa-stethoscope text-xl"></i>
+                            <h2 class="text-lg font-semibold">系統診斷</h2>
+                        </div>
+                        <button id="diagnosticBtn" class="px-4 py-1.5 bg-white text-teal-600 text-sm font-semibold rounded-lg
+                                       hover:bg-gray-100 transition-all duration-200 transform hover:scale-105">
+                            <i class="fas fa-heartbeat mr-1"></i>診斷
+                        </button>
+                    </div>
+                    <div id="diagnosticResult" class="bg-gray-900/90 backdrop-blur-sm rounded-lg p-2 flex-1 min-h-0 overflow-y-auto overflow-x-hidden diagnostic-scrollbar">
+                        <div class="text-gray-300 text-base">
+                            點擊診斷按鈕檢查系統狀態...
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右側：音訊處理區域 (60%) -->
+            <div class="lg:w-3/5 flex flex-col gap-4 min-h-0 min-w-0">
+                <!-- 分頁按鈕 -->
+                <div class="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg overflow-hidden flex-shrink-0">
+                    <div class="flex border-b border-gray-200">
+                        <button class="tab-button active flex-1 px-4 py-3 text-sm font-medium text-gray-700 hover:text-gray-900 focus:outline-none transition-colors" data-tab="recorder">
+                            <i class="fas fa-microphone mr-2"></i>錄音測試
+                        </button>
+                        <button class="tab-button flex-1 px-4 py-3 text-sm font-medium text-gray-700 hover:text-gray-900 focus:outline-none transition-colors" data-tab="audio">
+                            <i class="fas fa-file-audio mr-2"></i>音訊檔案
+                        </button>
+                        <button class="tab-button flex-1 px-4 py-3 text-sm font-medium text-gray-700 hover:text-gray-900 focus:outline-none transition-colors" data-tab="log">
+                            <i class="fas fa-terminal mr-2"></i>系統日誌
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 分頁內容區域 -->
+                <div class="flex-1 bg-white/95 backdrop-blur-sm rounded-xl shadow-2xl p-4 min-h-0 overflow-hidden flex flex-col">
+                    <!-- 錄音測試分頁 -->
+                    <div id="recorder-tab" class="tab-content flex-1 flex flex-col min-h-0">
+                        <!-- 控制按鈕區 -->
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                            <button id="startBtn" class="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2">
+                                <i class="fas fa-play"></i><span>開始測試</span>
+                            </button>
+                            <button id="stopBtn" disabled class="bg-gradient-to-r from-red-500 to-pink-600 text-white px-4 py-2 rounded-lg hover:from-red-600 hover:to-pink-700 transition-all duration-200 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center gap-2">
+                                <i class="fas fa-stop"></i><span>停止測試</span>
+                            </button>
+                            <button id="clearBtn" class="bg-gradient-to-r from-gray-500 to-gray-600 text-white px-4 py-2 rounded-lg hover:from-gray-600 hover:to-gray-700 transition-all duration-200 transform hover:scale-105 flex items-center justify-center gap-2">
+                                <i class="fas fa-trash"></i><span>清除結果</span>
+                            </button>
+                        </div>
+
+                        <!-- 狀態顯示區 -->
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                            <div class="bg-gradient-to-r from-blue-100 to-indigo-100 rounded-lg p-2">
+                                <div class="text-xs text-gray-600 mb-1">VAD 狀態</div>
+                                <div id="vadStatus" class="text-sm font-semibold text-gray-800">--</div>
+                            </div>
+                            <div class="bg-gradient-to-r from-purple-100 to-pink-100 rounded-lg p-2">
+                                <div class="text-xs text-gray-600 mb-1">喚醒詞</div>
+                                <div id="wakeStatus" class="text-sm font-semibold text-gray-800">--</div>
+                            </div>
+                            <div class="bg-gradient-to-r from-green-100 to-emerald-100 rounded-lg p-2">
+                                <div class="text-xs text-gray-600 mb-1">Whisper</div>
+                                <div id="whisperStatus" class="text-sm font-semibold text-gray-800">--</div>
+                            </div>
+                            <div class="bg-gradient-to-r from-orange-100 to-yellow-100 rounded-lg p-2">
+                                <div class="text-xs text-gray-600 mb-1">音量 (dBFS)</div>
+                                <div id="volumeLevel" class="text-sm font-semibold text-gray-800">--</div>
+                            </div>
+                        </div>
+
+                        <!-- 結果顯示區 -->
+                        <div class="flex-1 bg-gray-50 rounded-lg p-3 overflow-y-auto custom-scrollbar min-h-0">
+                            <div id="results" class="space-y-2">
+                                <div class="text-gray-500 text-sm">測試結果將顯示在這裡...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 音訊檔案分頁 -->
+                    <div id="audio-tab" class="tab-content hidden flex-1 flex flex-col min-h-0">
+                        <div class="space-y-4">
+                            <div class="bg-gradient-to-r from-indigo-50 to-purple-50 rounded-lg p-4">
+                                <h3 class="text-lg font-semibold text-gray-800 mb-3">
+                                    <i class="fas fa-upload text-indigo-600 mr-2"></i>上傳音訊檔案
+                                </h3>
+                                <input type="file" id="audioFile" accept="audio/*" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100">
+                                <div class="mt-3 flex gap-3">
+                                    <button id="processAudioBtn" disabled class="bg-gradient-to-r from-indigo-500 to-purple-600 text-white px-4 py-2 rounded-lg hover:from-indigo-600 hover:to-purple-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <i class="fas fa-play-circle mr-2"></i>處理音訊
+                                    </button>
+                                    <button id="downloadAudioBtn" disabled class="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-emerald-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                                        <i class="fas fa-download mr-2"></i>下載 WAV
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="audioResults" class="flex-1 bg-gray-50 rounded-lg p-4 overflow-y-auto custom-scrollbar">
+                                <div class="text-gray-500 text-sm">音訊處理結果將顯示在這裡...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 系統日誌分頁 -->
+                    <div id="log-tab" class="tab-content hidden flex-1 flex flex-col min-h-0">
+                        <div class="bg-gray-900 rounded-lg p-3 flex-1 overflow-y-auto custom-scrollbar">
+                            <div id="systemLog" class="font-mono text-xs text-gray-300">
+                                <div class="text-green-400">[系統] WebASRCore NPM 測試 (Vite) 已載入</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+</body>
+</html>

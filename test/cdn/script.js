@@ -1,30 +1,50 @@
 
-// 等待 ONNX Runtime 載入完成
-async function waitForOrt() {
-    // 檢查 ort 是否已經存在
-    if (typeof ort !== 'undefined') {
-        return;
-    }
-    
-    // 等待最多 5 秒
-    const maxWaitTime = 5000;
+/**
+ * WebASRCore v0.7.0 - ULTIMATE CDN 版本測試
+ *
+ * 🎉 v0.7.0 新特性：完全自動化！
+ * - 無需手動設定任何 WASM 路徑
+ * - Bundle 自動偵測自己的位置
+ * - 自動設定所有必要的路徑
+ * - 支援跨域載入 (unpkg, jsDelivr, 自託管)
+ *
+ * 舊版本需要的複雜設定（現在已不需要）：
+ * ❌ transformers.env.backends.onnx.wasm.wasmPaths = { ... }
+ * ❌ ort.env.wasm.wasmPaths = { ... }
+ *
+ * 新版本：
+ * ✅ 只需要一個 <script> 標籤就能使用！
+ */
+
+// 等待 WebASRCore ULTIMATE 版本載入（已包含 ONNX Runtime 和 Transformers.js）
+async function waitForWebASRCore() {
+    const maxWaitTime = 10000;
     const checkInterval = 100;
     const startTime = Date.now();
-    
-    while (typeof ort === 'undefined') {
+
+    while (typeof window.WebASRCore === 'undefined') {
         if (Date.now() - startTime > maxWaitTime) {
-            throw new Error('ONNX Runtime 載入超時');
+            throw new Error('WebASRCore 載入超時');
         }
         await new Promise(resolve => setTimeout(resolve, checkInterval));
     }
+
+    console.log('[Script CDN] WebASRCore ULTIMATE 版本已載入');
+    console.log('[Script CDN] 包含服務:', Object.keys(window.WebASRCore).join(', '));
+
+    // ULTIMATE 版本已包含 Transformers.js，檢查是否可用
+    if (window.WebASRCore.transformers) {
+        console.log('[Script CDN] Transformers.js 已整合在 ULTIMATE 版本中');
+        console.log('[Script CDN] Transformers.js 功能:', Object.keys(window.WebASRCore.transformers).join(', '));
+    }
+
+    return window.WebASRCore;
 }
 
-// 等待 ONNX Runtime 載入完成後再導入 WebASRCore
-await waitForOrt();
-console.log('[Script] ONNX Runtime 已準備就緒，載入 WebASRCore...');
+const WebASRCore = await waitForWebASRCore();
 
-// 導入 WebASRCore - 使用動態 import 因為我們在 script module 中
-const WebASRCore = await import('./dist/web-asr-core.bundle.js');
+// ULTIMATE 版本已包含 Transformers.js，直接使用
+const transformers = window.WebASRCore.transformers || window.transformers;
 
 // Whisper 模型狀態管理
 const whisperState = {
@@ -185,7 +205,7 @@ async function initAudio() {
         // 使用 AudioWorkletNode 替代 ScriptProcessorNode
         try {
             // 先載入 worklet module
-            await audioContext.audioWorklet.addModule('worklets/audio-processor.worklet.js');
+            await audioContext.audioWorklet.addModule('/worklets/audio-processor.worklet.js');
             
             // 創建 AudioWorkletNode
             processor = new AudioWorkletNode(audioContext, 'audio-processor');
@@ -567,15 +587,20 @@ async function loadWhisperModel(source, modelId) {
     document.getElementById('whisperCancelLoad').classList.remove('hidden');
 
     try {
+        // 檢查 Transformers.js 是否可用
+        if (!transformers) {
+            throw new Error('Transformers.js 尚未載入，無法使用 Whisper 功能');
+        }
+
         // 配置 transformers.js 環境
-        if (window.transformers) {
-            const { env } = window.transformers;
+        if (transformers && transformers.env) {
+            const { env } = transformers;
 
             // 根據 source 參數決定使用本地還是遠端模式
             if (source === 'local') {
                 // 本地模式設定
                 env.allowLocalModels = true;
-                env.localModelPath = './models/';  // 本地模型路徑
+                env.localModelPath = '/models/';  // 本地模型路徑
                 env.allowRemoteModels = false;
                 log('whisperLog', '配置為本地模型載入模式', 'info');
                 log('whisperLog', `本地路徑: ${env.localModelPath}`, 'info');
@@ -593,34 +618,86 @@ async function loadWhisperModel(source, modelId) {
             log('whisperLog', `allowLocalModels: ${env.allowLocalModels}`, 'info');
             log('whisperLog', `allowRemoteModels: ${env.allowRemoteModels}`, 'info');
 
-            // 設定 WASM 路徑
+            // 設定 WASM 路徑 - 修正 about:blank 問題
             env.backends = env.backends || {};
             env.backends.onnx = env.backends.onnx || {};
             env.backends.onnx.wasm = env.backends.onnx.wasm || {};
 
-            // 使用對映表指定 WASM 檔案路徑
-            // 優先使用本地 public/ort 目錄的檔案
-            try {
-                const testResponse = await fetch('./public/ort/ort-wasm-simd-threaded.jsep.wasm', { method: 'HEAD' });
-                if (testResponse.ok) {
-                    // 使用物件對映方式指定每個檔案的路徑
-                    env.backends.onnx.wasm.wasmPaths = {
-                        'ort-wasm-simd-threaded.jsep.mjs':  './public/ort/ort-wasm-simd-threaded.jsep.mjs',
-                        'ort-wasm-simd-threaded.jsep.wasm': './public/ort/ort-wasm-simd-threaded.jsep.wasm',
+            // ★ v0.6.0: 終極修正 - 強制使用絕對 CDN 路徑（徹底解決 about:blank 錯誤）
+            // 檢查協議類型
+            if (location.protocol === 'https:' || location.protocol === 'http:') {
+                // 網頁環境 - 使用 CDN
+                const wasmBasePath = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3/dist/';
 
-                        // 兼容舊檔名探測
-                        'ort-wasm.wasm':                    './public/ort/ort-wasm-simd-threaded.jsep.wasm',
-                        'ort-wasm-simd.wasm':               './public/ort/ort-wasm-simd-threaded.jsep.wasm',
-                        'ort-wasm-simd-threaded.wasm':      './public/ort/ort-wasm-simd-threaded.wasm'
-                    };
-                    log('whisperLog', 'WASM 路徑已設定 (使用本地 public/ort)', 'info');
-                } else {
-                    throw new Error('Local WASM files not available in public/ort');
+                // v0.6.0: 設定完整的 WASM 路徑映射表
+                const wasmPaths = {
+                    // 標準格式（Transformers.js 可能會用這些鍵）
+                    'mjs': wasmBasePath + 'ort-wasm-simd-threaded.jsep.mjs',
+                    'wasm': wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+
+                    // 主要檔案 - 使用絕對 URL
+                    'ort-wasm-simd-threaded.jsep.mjs':  wasmBasePath + 'ort-wasm-simd-threaded.jsep.mjs',
+                    'ort-wasm-simd-threaded.jsep.wasm': wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+
+                    // 備用檔案映射（相容性）
+                    'ort-wasm.wasm':                    wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm-simd.wasm':               wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm-simd-threaded.wasm':      wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+                    'ort-wasm-simd.mjs':                wasmBasePath + 'ort-wasm-simd-threaded.jsep.mjs',
+                    'ort-wasm-simd-threaded.mjs':       wasmBasePath + 'ort-wasm-simd-threaded.jsep.mjs',
+
+                    // 額外的相對路徑映射（v0.6.0 新增）
+                    './ort-wasm-simd-threaded.jsep.mjs':  wasmBasePath + 'ort-wasm-simd-threaded.jsep.mjs',
+                    './ort-wasm-simd-threaded.jsep.wasm': wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+                    './ort-wasm-simd-threaded.mjs':       wasmBasePath + 'ort-wasm-simd-threaded.jsep.mjs',
+                    './ort-wasm-simd-threaded.wasm':      wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+                    './ort-wasm-simd.mjs':                wasmBasePath + 'ort-wasm-simd-threaded.jsep.mjs',
+                    './ort-wasm-simd.wasm':               wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm',
+                    './ort-wasm.wasm':                    wasmBasePath + 'ort-wasm-simd-threaded.jsep.wasm'
+                };
+
+                // 設定路徑
+                env.backends.onnx.wasm.wasmPaths = wasmPaths;
+
+                // v0.6.0: 設定路徑但保持可寫（避免 Transformers.js 重新設定時出錯）
+                try {
+                    // 使用 getter 來始終返回我們的路徑，但保持屬性可寫
+                    Object.defineProperty(env.backends.onnx.wasm, 'wasmPaths', {
+                        get: function() { return wasmPaths; },
+                        set: function(value) {
+                            log('whisperLog', '⚠️ [v0.6.0] 偵測到 WASM 路徑重設嘗試，維持 CDN 路徑', 'warning');
+                            // 忽略重設，始終使用我們的 CDN 路徑
+                        },
+                        configurable: true
+                    });
+                    log('whisperLog', '🔒 [v0.6.0] WASM 路徑保護機制已啟用', 'success');
+                } catch (e) {
+                    log('whisperLog', '[v0.6.0] 無法設定 WASM 路徑保護', 'warning');
                 }
-            } catch (e) {
-                // 使用 CDN 作為備案
-                env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/';
-                log('whisperLog', 'WASM 路徑已設定 (使用 CDN)', 'info');
+
+                // 同時設定 ONNX Runtime 的 WASM 路徑（如果有需要）
+                if (window.ort && window.ort.env && window.ort.env.wasm) {
+                    window.ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
+                }
+
+                log('whisperLog', `✅ [v0.6.0] WASM 路徑已設定（${Object.keys(wasmPaths).length} 個映射）`, 'success');
+                log('whisperLog', '[v0.6.0] CDN: https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3/dist/', 'info');
+            } else {
+                // 本地檔案系統（file:// 協議）
+                // 嘗試使用本地 public/ort 目錄
+                try {
+                    const testResponse = await fetch('/public/ort/ort-wasm-simd-threaded.jsep.wasm', { method: 'HEAD' });
+                    if (testResponse.ok) {
+                        env.backends.onnx.wasm.wasmPaths = '/public/ort/';
+                        log('whisperLog', 'WASM 路徑已設定 (使用本地 public/ort)', 'info');
+                    } else {
+                        throw new Error('Local WASM files not available');
+                    }
+                } catch (e) {
+                    // 本地檔案也使用 CDN 作為備案
+                    env.backends.onnx.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.3/dist/';
+                    log('whisperLog', 'WASM 路徑已設定 (本地檔案系統使用 CDN 備案)', 'info');
+                }
             }
         }
 
@@ -863,28 +940,89 @@ document.getElementById('initBtn').addEventListener('click', async () => {
     status.textContent = '正在載入模型...';
 
     try {
-        // 硬編碼模型路徑配置 - 使用相對路徑
+        // 🎉 v0.7.0 自動化驗證
+        console.log('===== WebASRCore v0.7.0 自動化功能驗證 =====');
+
+        // 檢查 WASM 路徑是否已自動設定
+        if (transformers && transformers.env && transformers.env.backends) {
+            const wasmPaths = transformers.env.backends.onnx?.wasm?.wasmPaths;
+            if (wasmPaths) {
+                console.log('✅ WASM 路徑已自動設定：');
+                console.log('   - jsep.mjs:', wasmPaths['ort-wasm-simd-threaded.jsep.mjs']);
+                console.log('   - jsep.wasm:', wasmPaths['ort-wasm-simd-threaded.jsep.wasm']);
+                console.log('   - wasm:', wasmPaths['ort-wasm-simd-threaded.wasm']);
+                log('vadLog', '✅ v0.7.0 自動路徑配置成功！無需手動設定', 'success');
+            } else {
+                console.warn('⚠️ WASM 路徑未設定');
+                log('vadLog', '⚠️ WASM 路徑需要手動設定', 'warning');
+            }
+        }
+
+        // 檢查 Bundle 載入位置
+        const scripts = document.getElementsByTagName('script');
+        for (let script of scripts) {
+            if (script.src && script.src.includes('web-asr-core')) {
+                console.log('📦 Bundle 載入位置:', script.src);
+                const baseUrl = script.src.substring(0, script.src.lastIndexOf('/') + 1);
+                console.log('📂 WASM 檔案預期位置:', baseUrl);
+                break;
+            }
+        }
+
+        console.log('===========================================');
+
+        // 設定 ConfigManager 的模型路徑
+        if (WebASRCore.ConfigManager) {
+            const config = WebASRCore.ConfigManager.getInstance();
+            // 設定 VAD 模型路徑
+            config.vad.modelPath = '/models/github/snakers4/silero-vad/silero_vad_v6.onnx';
+
+            // 設定 WakeWord 模型路徑
+            config.wakeword.hey_jarvis.detectorPath = '/models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx';
+            config.wakeword.hey_jarvis.melspecPath = '/models/github/dscripka/openWakeWord/melspectrogram.onnx';
+            config.wakeword.hey_jarvis.embeddingPath = '/models/github/dscripka/openWakeWord/embedding_model.onnx';
+
+            config.wakeword.hey_mycroft.detectorPath = '/models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx';
+            config.wakeword.hey_mycroft.melspecPath = '/models/github/dscripka/openWakeWord/melspectrogram.onnx';
+            config.wakeword.hey_mycroft.embeddingPath = '/models/github/dscripka/openWakeWord/embedding_model.onnx';
+
+            config.wakeword.alexa.detectorPath = '/models/github/dscripka/openWakeWord/alexa_v0.1.onnx';
+            config.wakeword.alexa.melspecPath = '/models/github/dscripka/openWakeWord/melspectrogram.onnx';
+            config.wakeword.alexa.embeddingPath = '/models/github/dscripka/openWakeWord/embedding_model.onnx';
+
+            // 設定 ONNX Runtime WASM 路徑
+            config.onnx.wasmPaths = {
+                'ort-wasm.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+                'ort-wasm-simd.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+                'ort-wasm-simd-threaded.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+                'ort-wasm-simd-threaded.jsep.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm'
+            };
+
+            console.log('ConfigManager 模型路徑已更新');
+        }
+
+        // 硬編碼模型路徑配置 - 使用絕對路徑
         const MODEL_PATHS = {
             vad: {
-                modelUrl: 'models/github/snakers4/silero-vad/silero_vad_v6.onnx'
+                modelUrl: '/models/github/snakers4/silero-vad/silero_vad_v6.onnx'
             },
             wakeword: {
                 'hey-jarvis': {
-                    detectorUrl: 'models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
-                    melspecUrl: 'models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: 'models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: '/models/github/dscripka/openWakeWord/hey_jarvis_v0.1.onnx',
+                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 },
                 'hey-mycroft': {
-                    detectorUrl: 'models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
-                    melspecUrl: 'models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: 'models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: '/models/github/dscripka/openWakeWord/hey_mycroft_v0.1.onnx',
+                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 },
                 'alexa': {
-                    detectorUrl: 'models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
-                    melspecUrl: 'models/github/dscripka/openWakeWord/melspectrogram.onnx',
-                    embeddingUrl: 'models/github/dscripka/openWakeWord/embedding_model.onnx',
+                    detectorUrl: '/models/github/dscripka/openWakeWord/alexa_v0.1.onnx',
+                    melspecUrl: '/models/github/dscripka/openWakeWord/melspectrogram.onnx',
+                    embeddingUrl: '/models/github/dscripka/openWakeWord/embedding_model.onnx',
                     threshold: 0.5
                 }
             },
@@ -1014,7 +1152,12 @@ document.getElementById('initBtn').addEventListener('click', async () => {
         wakewordStates.clear();
 
         // 載入 Whisper - Event Architecture v2
-        log('whisperLog', '初始化 WhisperService...', 'info');
+        if (!window.transformers) {
+            log('whisperLog', '⚠️ Transformers.js 尚未載入，Whisper 功能暫時不可用', 'warning');
+            updateStatus('whisperStatus', 'Transformers.js 未載入', 'error');
+        } else {
+            log('whisperLog', '初始化 WhisperService...', 'info');
+        }
 
         // 創建 WhisperService 實例
         whisperService = new WebASRCore.WhisperService({
@@ -1103,7 +1246,10 @@ document.getElementById('initBtn').addEventListener('click', async () => {
             document.getElementById('vadStartBtn').disabled = false;
             document.getElementById('wakewordStartBtn').disabled = false;
             document.getElementById('wakewordSelect').disabled = false;
-            document.getElementById('whisperRecordBtn').disabled = false;
+            // 只有在 transformers.js 可用時才啟用 Whisper 按鈕
+            if (window.transformers) {
+                document.getElementById('whisperRecordBtn').disabled = false;
+            }
 
             // 更新狀態
             updateStatus('vadStatus', '準備就緒');

@@ -1,6 +1,6 @@
 {
   "name": "web-asr-core",
-  "version": "0.3.0",
+  "version": "0.7.1",
   "description": "WebASR Core - Browser-based speech processing with VAD, WakeWord and Whisper (includes ULTIMATE all-in-one CDN version)",
   "type": "module",
   "main": "dist/index.js",

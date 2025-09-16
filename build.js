@@ -80,7 +80,7 @@ async function build() {
       plugins: [globalsShimPlugin],
     });
     console.log('✅ Bundle created at dist/web-asr-core.bundle.js');
-    
+
     // Build the worker with bundled dependencies
     console.log('\nBuilding worker bundle...');
     await esbuild.build({
@@ -99,7 +99,7 @@ async function build() {
       plugins: [], // 移除 globalsShimPlugin，讓 Worker 直接 bundle onnxruntime-web
     });
     console.log('✅ Worker bundle created at dist/workers/onnx-inference.worker.js');
-    
+
     // Also build a standalone version with dependencies included (larger file)
     console.log('\nBuilding standalone bundle with dependencies...');
     await esbuild.build({
@@ -266,55 +266,135 @@ function copyORTFiles() {
 
 // 建立 ULTIMATE 版本
 async function buildUltimateVersion() {
-  // 創建特殊的入口點，包含 Transformers.js 並自動設定路徑
+  // 創建特殊的入口點，包含 Transformers.js 和 ONNX Runtime 並自動設定路徑
   const ultimateEntryContent = `
-// WebASRCore Ultimate Edition - 包含所有依賴
-import * as transformers from '@huggingface/transformers';
+// WebASRCore Ultimate Edition - 自動設定 WASM 路徑版本
+import * as transformersMod from '@huggingface/transformers';
+import * as ortMod from 'onnxruntime-web';
 
-// 匯出原始的 WebASRCore
+// 重新匯出主要 API
 export * from './index.ts';
 
-// 在瀏覽器環境中設定 transformers
-if (typeof window !== 'undefined') {
-  // 暴露 transformers 到全域
-  window.transformers = transformers;
-
-  // 自動設定 WASM 路徑
-  function resolveBaseURL() {
-    // 優先從 currentScript 取得
-    const scriptSrc = document.currentScript?.src;
-    if (scriptSrc) {
-      return scriptSrc.substring(0, scriptSrc.lastIndexOf('/') + 1);
+// ===== 自動設定 WASM 路徑（在 bundle 載入時立即執行）=====
+(function bootstrapWasmPaths() {
+  try {
+    // 1) 計算本 bundle 所在的絕對資料夾 URL
+    let baseUrl = '';
+    try {
+      // 嘗試從 currentScript 取得
+      if (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) {
+        const scriptUrl = document.currentScript.src;
+        baseUrl = scriptUrl.substring(0, scriptUrl.lastIndexOf('/') + 1);
+      } else if (typeof location !== 'undefined') {
+        // 使用頁面位置作為備用
+        baseUrl = location.origin + location.pathname.substring(0, location.pathname.lastIndexOf('/') + 1);
+      }
+    } catch (e) {
+      // 預設使用 CDN
+      baseUrl = 'https://unpkg.com/web-asr-core@latest/dist/';
     }
 
-    // 備用：從 import.meta.url（ESM）
-    if (typeof import.meta !== 'undefined' && import.meta.url) {
-      return new URL('./', import.meta.url).href;
+    // 如果沒有取得 baseUrl，使用 CDN 作為備用
+    if (!baseUrl) {
+      baseUrl = 'https://unpkg.com/web-asr-core@latest/dist/';
     }
 
-    // 最後備用：使用當前網址
-    return window.location.href.substring(0, window.location.href.lastIndexOf('/') + 1);
+    console.log('[WebASRCore Ultimate] 自動偵測 Bundle 位置:', baseUrl);
+
+    // 2) 取得全域實例
+    const g = typeof globalThis !== 'undefined'
+      ? globalThis
+      : (typeof self !== 'undefined' ? self : (typeof window !== 'undefined' ? window : {}));
+
+    // 3) 設定 Transformers.js 環境
+    if (transformersMod && transformersMod.env) {
+      const env = transformersMod.env;
+
+      env.remoteHost = 'https://huggingface.co';
+      env.remotePathTemplate = '{model}/resolve/{revision}/';
+      env.allowLocalModels = false;
+      env.allowRemoteModels = true;
+
+      // 初始化巢狀結構
+      env.backends = env.backends || {};
+      env.backends.onnx = env.backends.onnx || {};
+      env.backends.onnx.wasm = env.backends.onnx.wasm || {};
+
+      // 🎯 使用「字首字串」而非物件對應 - ONNX 官方推薦做法
+      // 這樣 ONNX 會自動附加檔名，最穩定
+      env.backends.onnx.wasm.wasmPaths = baseUrl;
+
+      // 設定其他 ONNX 參數
+      env.backends.onnx.wasm.numThreads =
+        (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 4;
+      env.backends.onnx.wasm.simd = true;
+
+      // ⚠️ 不要凍結路徑！讓庫能在不同環境自行調整
+    }
+
+    // 4) 設定 ORT（VAD/WakeWord 使用）- 同樣使用字首字串
+    if (ortMod && ortMod.env && ortMod.env.wasm) {
+      ortMod.env.wasm.wasmPaths = baseUrl; // 使用相同的字首字串
+      ortMod.env.wasm.simd = true;
+      ortMod.env.wasm.numThreads =
+        (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 4;
+
+      if (ortMod.env.webgpu) {
+        const isWindows = (typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent));
+        if (!isWindows) ortMod.env.webgpu.powerPreference = 'high-performance';
+      }
+    }
+
+    // 5) 🎯 重要！同時設定全域 WebASRCore 內的兩個實例
+    // 確保 WebASRCore.transformers 和 WebASRCore.ort 都使用正確路徑
+    if (g.WebASRCore) {
+      if (g.WebASRCore.transformers && g.WebASRCore.transformers.env) {
+        g.WebASRCore.transformers.env.backends = g.WebASRCore.transformers.env.backends || {};
+        g.WebASRCore.transformers.env.backends.onnx = g.WebASRCore.transformers.env.backends.onnx || {};
+        g.WebASRCore.transformers.env.backends.onnx.wasm = g.WebASRCore.transformers.env.backends.onnx.wasm || {};
+        g.WebASRCore.transformers.env.backends.onnx.wasm.wasmPaths = baseUrl;
+      }
+
+      if (g.WebASRCore.ort && g.WebASRCore.ort.env) {
+        g.WebASRCore.ort.env.wasm = g.WebASRCore.ort.env.wasm || {};
+        g.WebASRCore.ort.env.wasm.wasmPaths = baseUrl;
+      }
+    }
+
+    console.log('[WebASRCore Ultimate] ✅ 已載入 - 自動設定 WASM 路徑完成');
+    console.log('[WebASRCore Ultimate] 📍 WASM 檔案位置:', baseUrl);
+
+  } catch (e) {
+    console.warn('[WebASRCore Ultimate] WASM 路徑設定警告:', e);
   }
+})();
 
-  // 設定 transformers.js 環境
-  const baseURL = resolveBaseURL();
+// 優先使用已存在的全域實例，避免雙重實例問題
+const g = typeof globalThis !== 'undefined'
+  ? globalThis
+  : (typeof self !== 'undefined' ? self : (typeof window !== 'undefined' ? window : {}));
 
-  // 設定 ONNX Runtime WASM 路徑
-  transformers.env.backends = transformers.env.backends || {};
-  transformers.env.backends.onnx = transformers.env.backends.onnx || {};
-  transformers.env.backends.onnx.wasm = transformers.env.backends.onnx.wasm || {};
-  transformers.env.backends.onnx.wasm.wasmPaths = baseURL;
+// 統一使用的單一實例（優先使用已存在的全域實例）
+const transformers = (g.WebASRCore && g.WebASRCore.transformers) || g.transformers || transformersMod;
+const ort = (g.WebASRCore && g.WebASRCore.ort) || g.ort || ortMod;
 
-  // 設定其他環境變數
-  transformers.env.allowLocalModels = false;
-  transformers.env.allowRemoteModels = true;
-  transformers.env.remoteURL = 'https://huggingface.co/';
-  transformers.env.remoteHost = 'https://huggingface.co';
-  transformers.env.remotePathTemplate = '{model}/resolve/{revision}/';
+// 暴露到全域，確保外部頁面不會再載入另一份
+g.WebASRCore = g.WebASRCore || {};
+g.WebASRCore.transformers = transformers;
+g.WebASRCore.ort = ort;
+g.transformers = transformers;
+g.ort = ort;
 
-  console.log('[WebASRCore Ultimate] 已載入，WASM 路徑:', baseURL);
-  console.log('[WebASRCore Ultimate] Transformers.js 已自動配置');
+// 檢測是否有不同版本的實例（可選的警告）
+if (g.transformers && transformersMod && g.transformers !== transformersMod) {
+  try { console.warn('[WebASRCore Ultimate] 偵測到不同的 transformers 模組實例；使用全域單一實例。'); } catch {}
 }
+if (g.ort && ortMod && g.ort !== ortMod) {
+  try { console.warn('[WebASRCore Ultimate] 偵測到不同的 onnxruntime-web 模組實例；使用全域單一實例。'); } catch {}
+}
+
+// 重新匯出解析後的單一實例
+export { transformers, ort };
 `;
 
   // 寫入臨時入口檔案
@@ -337,8 +417,7 @@ if (typeof window !== 'undefined') {
         'import.meta.url': 'undefined'  // 避免 import.meta 錯誤
       },
       loader: {
-        '.wasm': 'file',
-        '.mjs': 'js',
+        '.wasm': 'file'
       },
       plugins: [],
     });
@@ -360,8 +439,7 @@ if (typeof window !== 'undefined') {
         'import.meta.url': 'undefined'
       },
       loader: {
-        '.wasm': 'file',
-        '.mjs': 'js',
+        '.wasm': 'file'
       },
       plugins: [],
     });

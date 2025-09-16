@@ -1,0 +1,27 @@
+/* 自定義捲軸樣式 */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* 日誌動畫 */
+.log-entry {
+  animation: slideIn 0.3s ease-out;
+}
+
+/* Canvas 背景 */
+canvas {
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}

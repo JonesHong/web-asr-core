@@ -1,50 +1,48 @@
 
 /**
- * WebASRCore - 統一版本 CDN 測試
+ * WebASRCore - NPM 安裝版本測試 (v0.8.0 統一版本)
  *
- * 🎉 統一版本特性：完全自動化！
- * - 無需手動設定任何 WASM 路徑
- * - Bundle 自動偵測自己的位置
- * - 自動設定所有必要的路徑
- * - 支援跨域載入 (unpkg, jsDelivr, 自託管)
- *
- * 舊版本需要的複雜設定（現在已不需要）：
- * ❌ transformers.env.backends.onnx.wasm.wasmPaths = { ... }
- * ❌ ort.env.wasm.wasmPaths = { ... }
- *
- * 新版本：
- * ✅ 只需要一個 <script> 標籤就能使用！
+ * 透過 npm install web-asr-core 安裝並使用
+ * 使用 ES 模組方式導入
+ * v0.8.0 開始已包含所有依賴，無需另外安裝 transformers.js
  */
 
-// 等待 WebASRCore 統一版本載入（已包含 ONNX Runtime 和 Transformers.js）
-async function waitForWebASRCore() {
-    const maxWaitTime = 10000;
-    const checkInterval = 100;
-    const startTime = Date.now();
+// 從 npm 安裝的套件導入 (v0.8.0 統一版本)
+import * as WebASRCore from 'web-asr-core';
 
-    while (typeof window.WebASRCore === 'undefined') {
-        if (Date.now() - startTime > maxWaitTime) {
-            throw new Error('WebASRCore 載入超時');
-        }
-        await new Promise(resolve => setTimeout(resolve, checkInterval));
-    }
+// v0.8.0 統一版本已包含所有依賴
+const { ort, transformers } = WebASRCore;
 
-    console.log('[Script CDN] WebASRCore 統一版本已載入');
-    console.log('[Script CDN] 包含服務:', Object.keys(window.WebASRCore).join(', '));
+// 設定 ONNX Runtime
+console.log('[NPM Test] 載入 WebASRCore v0.8.0 統一版本...');
+console.log('[NPM Test] 包含服務:', Object.keys(WebASRCore).join(', '));
 
-    // 統一版本已包含 Transformers.js，檢查是否可用
-    if (window.WebASRCore.transformers) {
-        console.log('[Script CDN] Transformers.js 已整合在統一版本中');
-        console.log('[Script CDN] Transformers.js 功能:', Object.keys(window.WebASRCore.transformers).join(', '));
-    }
+// 設定 window 物件以供後續使用
+window.WebASRCore = WebASRCore;
+window.ort = ort;
+window.transformers = transformers;
 
-    return window.WebASRCore;
+// 配置 ONNX Runtime WASM 路徑 (v0.8.0 自動處理，但可手動覆蓋)
+if (ort && ort.env) {
+    ort.env.wasm.wasmPaths = '/node_modules/web-asr-core/dist/';
+    console.log('[NPM Test] ONNX Runtime WASM 路徑已設定');
 }
 
-const WebASRCore = await waitForWebASRCore();
+// 設定 Transformers.js WASM 路徑 (v0.8.0 自動處理，但可手動覆蓋)
+if (transformers && transformers.env) {
+    transformers.env.backends = transformers.env.backends || {};
+    transformers.env.backends.onnx = transformers.env.backends.onnx || {};
+    transformers.env.backends.onnx.wasm = transformers.env.backends.onnx.wasm || {};
+    transformers.env.backends.onnx.wasm.wasmPaths = '/node_modules/web-asr-core/dist/';
+    console.log('[NPM Test] Transformers.js WASM 路徑已設定');
+}
 
-// v0.8.1 統一版本已包含 Transformers.js，直接使用
-const transformers = window.WebASRCore.transformers || window.transformers;
+// 檢查依賴是否可用 (v0.8.0 應該都可用)
+if (transformers) {
+    console.log('[NPM Test] Transformers.js 已包含在 WebASRCore v0.8.0 中');
+} else {
+    console.error('[NPM Test] Transformers.js 載入失敗');
+}
 
 // Whisper 模型狀態管理
 const whisperState = {
@@ -205,7 +203,13 @@ async function initAudio() {
         // 使用 AudioWorkletNode 替代 ScriptProcessorNode
         try {
             // 先載入 worklet module
-            await audioContext.audioWorklet.addModule('/worklets/audio-processor.worklet.js');
+            // NPM 版本不需要載入 worklet，已經包含在模組中
+            // 如果需要，可以從根目錄載入
+            try {
+                await audioContext.audioWorklet.addModule('/worklets/audio-processor.worklet.js');
+            } catch (e) {
+                console.warn('[NPM Test] AudioWorklet 載入失敗，可能已經內建於模組中', e);
+            }
             
             // 創建 AudioWorkletNode
             processor = new AudioWorkletNode(audioContext, 'audio-processor');
@@ -990,13 +994,13 @@ document.getElementById('initBtn').addEventListener('click', async () => {
             config.wakeword.alexa.melspecPath = '/models/github/dscripka/openWakeWord/melspectrogram.onnx';
             config.wakeword.alexa.embeddingPath = '/models/github/dscripka/openWakeWord/embedding_model.onnx';
 
-            // 設定 ONNX Runtime WASM 路徑
-            config.onnx.wasmPaths = {
-                'ort-wasm.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-                'ort-wasm-simd.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-                'ort-wasm-simd-threaded.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
-                'ort-wasm-simd-threaded.jsep.wasm': '/node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm'
-            };
+            // NPM 版本已經設定 WASM 路徑，通常不需要額外設定
+            // 如果有需要可以覆蓋
+            config.onnx.wasmPaths = '/node_modules/onnxruntime-web/dist/';
+
+            // 關閉 Web Worker 以避免載入錯誤
+            config.onnx.useWebWorker = false;
+            console.log('已關閉 Web Worker 模式，使用主執行緒執行');
 
             console.log('ConfigManager 模型路徑已更新');
         }
@@ -1310,26 +1314,21 @@ document.getElementById('vadStopBtn').addEventListener('click', () => {
 // 儲存自訂模型資訊
 let customWakewordModel = null;
 
-// 初始化 WakewordService（如果尚未初始化）
+// 初始化 WakewordService 事件監聽器
 async function initializeWakewordService() {
-    if (wakewordService) {
-        return; // 已經初始化
+    // WakewordService 應該已在 initServices 中創建
+    if (!wakewordService) {
+        log('wakewordLog', '❌ WakewordService 未初始化，請先調用 initServices', 'error');
+        return;
     }
-    
+
+    // 避免重複初始化事件監聽器
+    if (wakewordService.listenerCount('wakewordDetected') > 0) {
+        return; // 事件監聽器已設置
+    }
+
     try {
-        const { WakewordService } = WebASRCore;
-        
-        // 創建 WakewordService 實例
-        wakewordService = new WakewordService({
-            thresholds: {
-                'hey_jarvis': 0.6,
-                'hey_mycroft': 0.5,
-                'alexa': 0.5,
-                'ok_google': 0.5
-            },
-            resetOnDetection: true
-        });
-        
+
         // 設置喚醒詞事件監聽器
         wakewordService.on('wakewordDetected', ({ word, score }) => {
             const detectionSound = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBTGS2OzMeSsFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSCBzvLZiTcIGlyx9u2QQAoUXrTp66hVFApGn+DyvmwhBQ==');
@@ -2365,10 +2364,72 @@ document.getElementById('diagnosticBtn').addEventListener('click', async () => {
     resultDiv.innerHTML = '<div class="text-gray-200 text-base font-medium">正在執行診斷...</div>';
     
     try {
-        // 動態導入系統診斷工具
-        const { SystemDiagnostics } = await import('./dist/utils/system-diagnostics.js');
-        const diagnostics = SystemDiagnostics.getInstance();
-        const report = await diagnostics.diagnose();
+        // 嘗試從 web-asr-core 模組導入系統診斷工具
+        let report;
+
+        if (WebASRCore.SystemDiagnostics) {
+            const diagnostics = WebASRCore.SystemDiagnostics.getInstance();
+            report = await diagnostics.diagnose();
+        } else {
+            // 如果模組中沒有 SystemDiagnostics，使用基本診斷
+            console.log('[NPM Test] 使用基本系統診斷');
+
+            // 檢測 WebAssembly SIMD 支援
+            const checkWasmSIMD = async () => {
+                try {
+                    const response = await WebAssembly.instantiate(new Uint8Array([
+                        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+                        0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7b, 0x03,
+                        0x02, 0x01, 0x00, 0x0a, 0x0a, 0x01, 0x08, 0x00,
+                        0x41, 0x00, 0xfd, 0x0f, 0x0b
+                    ]));
+                    return true;
+                } catch {
+                    return false;
+                }
+            };
+
+            report = {
+                browser: {
+                    userAgent: navigator.userAgent,
+                    vendor: navigator.vendor || 'Unknown',
+                    name: /Chrome/.test(navigator.userAgent) ? 'Chrome' :
+                          /Firefox/.test(navigator.userAgent) ? 'Firefox' :
+                          /Safari/.test(navigator.userAgent) ? 'Safari' :
+                          /Edge/.test(navigator.userAgent) ? 'Edge' : 'Unknown',
+                    version: navigator.userAgent.match(/(?:Chrome|Firefox|Safari|Edge)\/(\d+)/)?.[1] || 'Unknown'
+                },
+                supported: {
+                    secureContext: window.isSecureContext,
+                    getUserMedia: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+                    audioWorklet: typeof AudioWorkletNode !== 'undefined',
+                    mediaRecorder: typeof MediaRecorder !== 'undefined',
+                    webSpeechRecognition: 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window,
+                    webSpeechOffline: false,
+                    webAssembly: typeof WebAssembly !== 'undefined',
+                    webGPU: 'gpu' in navigator,
+                    wasmSIMD: await checkWasmSIMD(),
+                    wasmThreads: typeof SharedArrayBuffer !== 'undefined',
+                    sharedArrayBuffer: typeof SharedArrayBuffer !== 'undefined',
+                    webWorkers: typeof Worker !== 'undefined',
+                    offscreenCanvas: typeof OffscreenCanvas !== 'undefined'
+                },
+                performance: {
+                    memory: performance.memory ? {
+                        jsHeapSizeLimit: performance.memory.jsHeapSizeLimit,
+                        totalJSHeapSize: performance.memory.totalJSHeapSize,
+                        usedJSHeapSize: performance.memory.usedJSHeapSize
+                    } : null,
+                    cpu: {
+                        cores: navigator.hardwareConcurrency || 1
+                    }
+                },
+                security: {
+                    https: location.protocol === 'https:',
+                    crossOriginIsolated: self.crossOriginIsolated || false
+                }
+            };
+        }
         
         // 格式化診斷結果為 HTML - 使用適應性佈局
         let html = '<div class="grid grid-cols-1 lg:grid-cols-2 gap-2">';

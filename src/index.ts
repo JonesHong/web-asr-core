@@ -195,6 +195,12 @@ export {
 // 為方便起見重新匯出 onnxruntime-web 類型
 export type { InferenceSession, Tensor } from 'onnxruntime-web';
 
+// 匯出 onnxruntime-web 和 transformers.js (v0.8.0 統一版本)
+import * as ort from 'onnxruntime-web';
+import * as transformers from '@huggingface/transformers';
+
+export { ort, transformers };
+
 /** 版本號 */
 export const VERSION = '0.1.0';
 

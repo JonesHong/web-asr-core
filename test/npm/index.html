@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebASRCore - 語音服務測試</title>
+    <title>WebASRCore - NPM 安裝測試</title>
     <!-- <link rel="icon" href="favicon.ico" type="image/x-icon"> -->
 
     <!-- Tailwind CSS -->
@@ -152,7 +152,7 @@
             <div class="flex items-center justify-between">
                 <h1 class="text-2xl sm:text-3xl font-bold text-gray-800 flex items-center gap-3">
                     <i class="fas fa-microphone-alt text-indigo-600"></i>
-                    WebASRCore 語音服務測試 (CDN 版本)
+                    WebASRCore 語音服務測試 (NPM 版本)
                 </h1>
                 <a href="/" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-medium transition-colors duration-200 flex items-center gap-2">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1001,14 +1001,11 @@
         </div>
     </div>
 
-    <!-- 載入 WebASRCore CDN 版本 (v0.8.1 統一版本，包含所有功能) -->
-    <!-- v0.8.1: 修正 NPM 版本缺少 ort/transformers 導出問題 -->
-    <script src="https://unpkg.com/web-asr-core@0.8.1/dist/web-asr-core.min.js"></script>
+    <!-- NPM 版本：使用 ES 模組導入 -->
+    <!-- 需要先執行 npm install web-asr-core -->
+    <!-- 使用 Vite 開發伺服器：npm run dev -->
 
-    <!-- v0.8.1 已自動設定 WASM 路徑，無需額外配置！ -->
-    <!-- Bundle 會自動偵測自己的位置並設定正確的 WASM 路徑 -->
-
-    <!-- 主程式 -->
+    <!-- 主程式 - 使用 ES 模組 -->
     <script type="module" src="script.js"></script>
 </body>
 

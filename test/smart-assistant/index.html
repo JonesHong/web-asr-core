@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智慧語音助手 - WebASRCore v0.8.1</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- Custom Styles -->
+    <style>
+        @keyframes pulse-ring {
+            0% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.7);
+            }
+            50% {
+                transform: scale(1);
+                box-shadow: 0 0 0 20px rgba(99, 102, 241, 0);
+            }
+            100% {
+                transform: scale(0.95);
+                box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+            }
+        }
+
+        .listening-animation {
+            animation: pulse-ring 2s infinite;
+        }
+
+        .state-indicator {
+            transition: all 0.3s ease;
+        }
+
+        /* 音波動畫 */
+        .sound-wave {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            height: 40px;
+        }
+
+        .sound-wave span {
+            display: inline-block;
+            width: 4px;
+            height: 100%;
+            background: linear-gradient(180deg, #6366f1, #8b5cf6);
+            border-radius: 2px;
+            animation: wave 0.8s ease-in-out infinite;
+        }
+
+        .sound-wave span:nth-child(1) { animation-delay: 0s; }
+        .sound-wave span:nth-child(2) { animation-delay: 0.1s; }
+        .sound-wave span:nth-child(3) { animation-delay: 0.2s; }
+        .sound-wave span:nth-child(4) { animation-delay: 0.3s; }
+        .sound-wave span:nth-child(5) { animation-delay: 0.4s; }
+
+        @keyframes wave {
+            0%, 100% {
+                transform: scaleY(0.3);
+                opacity: 0.5;
+            }
+            50% {
+                transform: scaleY(1);
+                opacity: 1;
+            }
+        }
+
+        /* 計時器進度條 */
+        .timer-progress {
+            transition: width 1s linear;
+        }
+
+        /* 狀態指示器顏色 */
+        .state-idle {
+            background: linear-gradient(135deg, #94a3b8, #64748b);
+        }
+
+        .state-listening {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+        }
+
+        .state-processing {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+        }
+
+        /* 自定義捲軸 */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(0, 0, 0, 0.1);
+            border-radius: 3px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(156, 163, 175, 0.5);
+            border-radius: 3px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(156, 163, 175, 0.7);
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-white mb-2">
+                <i class="fas fa-robot mr-2"></i>
+                智慧語音助手
+            </h1>
+            <p class="text-white/80">WebASRCore v0.8.1 - 完整功能展示</p>
+        </div>
+
+        <!-- Main Content Grid -->
+        <div class="grid lg:grid-cols-3 gap-6">
+            <!-- Left Column: Assistant Status -->
+            <div class="lg:col-span-1 space-y-4">
+                <!-- Status Card -->
+                <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">
+                        <i class="fas fa-info-circle mr-2"></i>助手狀態
+                    </h2>
+
+                    <!-- State Indicator -->
+                    <div class="mb-6">
+                        <div id="stateIndicator" class="state-indicator state-idle rounded-full w-32 h-32 mx-auto flex items-center justify-center text-white shadow-lg">
+                            <div class="text-center">
+                                <i id="stateIcon" class="fas fa-bed text-3xl mb-2"></i>
+                                <div id="stateText" class="text-sm font-semibold">閒置中</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Sound Wave Animation (hidden by default) -->
+                    <div id="soundWave" class="sound-wave justify-center mb-4 hidden">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+
+                    <!-- Control Buttons -->
+                    <div class="grid grid-cols-2 gap-3">
+                        <button id="wakeBtn" class="px-4 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition-all">
+                            <i class="fas fa-power-off mr-2"></i>喚醒
+                        </button>
+                        <button id="sleepBtn" class="px-4 py-3 bg-gradient-to-r from-gray-500 to-gray-600 text-white rounded-lg font-semibold hover:shadow-lg transform hover:scale-105 transition-all">
+                            <i class="fas fa-moon mr-2"></i>休眠
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Settings Card -->
+                <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                        <i class="fas fa-cog mr-2"></i>設定
+                    </h3>
+
+                    <!-- VAD Sensitivity -->
+                    <div class="mb-4">
+                        <label class="text-sm text-gray-600 mb-1 block">VAD 敏感度</label>
+                        <div class="flex items-center gap-2">
+                            <input type="range" id="vadThreshold" min="0.1" max="0.9" step="0.1" value="0.5"
+                                   class="flex-1">
+                            <span id="vadThresholdValue" class="text-sm text-gray-700 w-8">0.5</span>
+                        </div>
+                    </div>
+
+                    <!-- Wakeword Sensitivity -->
+                    <div class="mb-4">
+                        <label class="text-sm text-gray-600 mb-1 block">喚醒詞敏感度</label>
+                        <div class="flex items-center gap-2">
+                            <input type="range" id="wakewordThreshold" min="0.1" max="0.9" step="0.1" value="0.6"
+                                   class="flex-1">
+                            <span id="wakewordThresholdValue" class="text-sm text-gray-700 w-8">0.6</span>
+                        </div>
+                    </div>
+
+                    <!-- Silence Timeout -->
+                    <div class="mb-4">
+                        <label class="text-sm text-gray-600 mb-1 block">靜音超時 (秒)</label>
+                        <div class="flex items-center gap-2">
+                            <input type="range" id="silenceTimeout" min="2" max="10" step="1" value="5"
+                                   class="flex-1">
+                            <span id="silenceTimeoutValue" class="text-sm text-gray-700 w-8">5</span>
+                        </div>
+                    </div>
+
+                    <!-- Wakeword Model Selection -->
+                    <div class="mb-4">
+                        <label class="text-sm text-gray-600 mb-1 block">喚醒詞模型</label>
+                        <select id="wakewordModel" class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm">
+                            <option value="hey-jarvis">Hey Jarvis</option>
+                            <option value="alexa">Alexa</option>
+                            <option value="hey-mycroft">Hey Mycroft</option>
+                            <option value="custom">自訂模型</option>
+                        </select>
+                    </div>
+
+                    <!-- Custom Model Upload -->
+                    <div id="customModelSection" class="hidden">
+                        <input type="file" id="customModelInput" accept=".onnx" class="hidden">
+                        <button id="uploadModelBtn" class="w-full px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition-colors">
+                            <i class="fas fa-upload mr-2"></i>上傳自訂模型
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Middle Column: Main Interaction -->
+            <div class="lg:col-span-1 space-y-4">
+                <!-- Transcript Card -->
+                <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                        <i class="fas fa-closed-captioning mr-2"></i>識別結果
+                    </h3>
+
+                    <!-- Current Recognition -->
+                    <div class="mb-4">
+                        <div class="text-sm text-gray-500 mb-1">即時識別：</div>
+                        <div id="interimTranscript" class="min-h-[60px] p-3 bg-gray-50 rounded-lg text-gray-700 italic">
+                            等待語音輸入...
+                        </div>
+                    </div>
+
+                    <!-- Final Recognition -->
+                    <div>
+                        <div class="text-sm text-gray-500 mb-1">最終結果：</div>
+                        <div id="finalTranscript" class="min-h-[100px] max-h-[200px] overflow-y-auto custom-scrollbar p-3 bg-blue-50 rounded-lg text-gray-800">
+                            尚未有識別結果
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Timer Card -->
+                <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                        <i class="fas fa-stopwatch mr-2"></i>計時器狀態
+                    </h3>
+
+                    <!-- Silence Timer -->
+                    <div class="mb-4">
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-600">靜音計時器</span>
+                            <span id="silenceTimerDisplay" class="text-gray-800 font-mono">0.0s</span>
+                        </div>
+                        <div class="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div id="silenceTimerProgress" class="timer-progress h-full bg-gradient-to-r from-blue-400 to-indigo-500 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+
+                    <!-- Max Listening Timer -->
+                    <div>
+                        <div class="flex justify-between text-sm mb-2">
+                            <span class="text-gray-600">最大聆聽時間</span>
+                            <span id="maxTimerDisplay" class="text-gray-800 font-mono">0.0s</span>
+                        </div>
+                        <div class="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                            <div id="maxTimerProgress" class="timer-progress h-full bg-gradient-to-r from-orange-400 to-red-500 rounded-full" style="width: 0%"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Audio Visualization -->
+                <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+                    <h3 class="text-lg font-semibold text-gray-800 mb-4">
+                        <i class="fas fa-chart-line mr-2"></i>音訊視覺化
+                    </h3>
+                    <canvas id="audioCanvas" class="w-full h-32 bg-gray-900 rounded-lg"></canvas>
+                </div>
+            </div>
+
+            <!-- Right Column: Event Logs -->
+            <div class="lg:col-span-1">
+                <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-xl p-6 h-full">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-semibold text-gray-800">
+                            <i class="fas fa-list mr-2"></i>事件日誌
+                        </h3>
+                        <button id="clearLogBtn" class="text-gray-500 hover:text-gray-700 text-sm">
+                            <i class="fas fa-trash mr-1"></i>清除
+                        </button>
+                    </div>
+
+                    <div id="eventLog" class="h-[600px] overflow-y-auto custom-scrollbar space-y-2 p-2 bg-gray-50 rounded-lg">
+                        <!-- Event logs will appear here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer Status Bar -->
+        <div class="mt-6 bg-white/95 backdrop-blur-sm rounded-xl shadow-xl p-4">
+            <div class="grid grid-cols-4 gap-4 text-center">
+                <!-- VAD Status -->
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">VAD 狀態</div>
+                    <div id="vadStatus" class="text-sm font-semibold text-gray-700">
+                        <i class="fas fa-circle text-gray-400 mr-1"></i>未初始化
+                    </div>
+                </div>
+
+                <!-- Wakeword Status -->
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">喚醒詞狀態</div>
+                    <div id="wakewordStatus" class="text-sm font-semibold text-gray-700">
+                        <i class="fas fa-circle text-gray-400 mr-1"></i>未初始化
+                    </div>
+                </div>
+
+                <!-- STT Status -->
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">STT 狀態</div>
+                    <div id="sttStatus" class="text-sm font-semibold text-gray-700">
+                        <i class="fas fa-circle text-gray-400 mr-1"></i>未初始化
+                    </div>
+                </div>
+
+                <!-- WebGPU Status -->
+                <div>
+                    <div class="text-xs text-gray-500 mb-1">WebGPU</div>
+                    <div id="webgpuStatus" class="text-sm font-semibold text-gray-700">
+                        <i class="fas fa-circle text-gray-400 mr-1"></i>檢測中
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load WebASRCore v0.8.1 from CDN -->
+    <script src="https://unpkg.com/web-asr-core@0.8.1/dist/web-asr-core.min.js"></script>
+
+    <!-- Application Modules -->
+    <script src="ui.js"></script>
+    <script src="assistant.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

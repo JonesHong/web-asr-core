@@ -5,226 +5,18 @@ import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Globals shim plugin to replace external dependencies with global variable access
-const globalsShimPlugin = {
-  name: 'globals-shim',
-  setup(build) {
-    // 把對 onnxruntime-web 的匯入改寫成從全域 ort 取值
-    build.onResolve({ filter: /^onnxruntime-web$/ }, (args) => {
-      return { path: args.path, namespace: 'globals-shim' };
-    });
-    // 把對 @xenova/transformers 的匯入改寫成從全域 transformers 取值
-    build.onResolve({ filter: /^@xenova\/transformers$/ }, (args) => {
-      return { path: args.path, namespace: 'globals-shim' };
-    });
-
-    build.onLoad({ filter: /.*/, namespace: 'globals-shim' }, (args) => {
-      if (args.path === 'onnxruntime-web') {
-        const contents = `
-          const ort = (globalThis && (globalThis.ort || (globalThis.window && window.ort))) || null;
-          if (!ort) throw new Error('Global "ort" not found. Make sure to include ort.min.js before loading the bundle.');
-          export default ort;
-          export const env = ort.env;
-          export const InferenceSession = ort.InferenceSession;
-          export const Tensor = ort.Tensor;
-          export const SessionOptions = ort.SessionOptions;
-        `;
-        return { contents, loader: 'js' };
-      }
-      if (args.path === '@xenova/transformers') {
-        const contents = `
-          const transformers = (globalThis && (globalThis.transformers || (globalThis.window && window.transformers))) || null;
-          if (!transformers) throw new Error('Global "transformers" not found. Load it (pipeline, env) before the bundle.');
-          export default transformers;
-          export const pipeline = transformers.pipeline;
-          export const env = transformers.env;
-        `;
-        return { contents, loader: 'js' };
-      }
-      return null;
-    });
-  }
-};
-
-// Build configuration for browser bundle
-const buildOptions = {
-  entryPoints: ['src/index.ts'],
-  bundle: true,
-  format: 'esm',  // ES module format for modern browsers
-  platform: 'browser',
-  target: 'es2020',
-  outfile: 'dist/web-asr-core.bundle.js',
-  sourcemap: true,
-  minify: false,  // Don't minify for easier debugging
-  loader: {
-    '.ts': 'ts'
-  },
-  external: [
-    // These libraries will be loaded separately via CDN or script tags
-    'onnxruntime-web',
-    '@xenova/transformers'
-  ],
-  define: {
-    'process.env.NODE_ENV': '"production"'
-  }
-};
-
-// Build the bundle
 async function build() {
-  try {
-    console.log('Building browser bundle...');
-    await esbuild.build({
-      ...buildOptions,
-      // 關鍵：這個 bundle 透過 shim 使用全域，不能把依賴 external 留成裸匯入
-      external: [],
-      plugins: [globalsShimPlugin],
-    });
-    console.log('✅ Bundle created at dist/web-asr-core.bundle.js');
+  console.log('\n🚀 建構 WebASRCore 統一版本...\n');
 
-    // Build the worker with bundled dependencies
-    console.log('\nBuilding worker bundle...');
-    await esbuild.build({
-      entryPoints: ['src/workers/onnx-inference.worker.ts'],
-      bundle: true,
-      format: 'iife',  // 改為 IIFE 格式，確保是 classic script
-      platform: 'browser',
-      target: 'es2022',
-      outfile: 'dist/workers/onnx-inference.worker.js',
-      sourcemap: true,
-      define: {
-        'process.env.NODE_ENV': '"production"'
-      },
-      // 關鍵：Worker 不使用 globals shim，直接 bundle ONNX Runtime
-      external: [],
-      plugins: [], // 移除 globalsShimPlugin，讓 Worker 直接 bundle onnxruntime-web
-    });
-    console.log('✅ Worker bundle created at dist/workers/onnx-inference.worker.js');
-
-    // Also build a standalone version with dependencies included (larger file)
-    console.log('\nBuilding standalone bundle with dependencies...');
-    await esbuild.build({
-      ...buildOptions,
-      outfile: 'dist/web-asr-core.standalone.js',
-      external: [], // Include all dependencies
-      minify: true, // Minify the standalone version
-      plugins: [],  // 關鍵：不要用 globalsShimPlugin
-    });
-    console.log('✅ Standalone bundle created at dist/web-asr-core.standalone.js');
-
-    // Build UMD version for CDN usage (requires external dependencies)
-    console.log('\nBuilding UMD bundle for CDN (requires external deps)...');
-    await esbuild.build({
-      entryPoints: ['src/index.ts'],
-      bundle: true,
-      format: 'iife',  // IIFE for browser global
-      globalName: 'WebASRCore',  // Global variable name
-      platform: 'browser',
-      target: 'es2020',
-      outfile: 'dist/web-asr-core.umd.js',
-      sourcemap: true,
-      minify: false,
-      external: [],  // Bundle all dependencies for CDN
-      plugins: [globalsShimPlugin],  // Use globals shim for smaller size
-      define: {
-        'process.env.NODE_ENV': '"production"'
-      },
-      footer: {
-        js: `// UMD wrapper\nif (typeof module === 'object' && typeof module.exports === 'object') {\n  module.exports = WebASRCore;\n} else if (typeof define === 'function' && define.amd) {\n  define([], function() { return WebASRCore; });\n}`
-      }
-    });
-    console.log('✅ UMD bundle created at dist/web-asr-core.umd.js');
-
-    // Build minified UMD version (requires external dependencies)
-    console.log('\nBuilding minified UMD bundle (requires external deps)...');
-    await esbuild.build({
-      entryPoints: ['src/index.ts'],
-      bundle: true,
-      format: 'iife',
-      globalName: 'WebASRCore',
-      platform: 'browser',
-      target: 'es2020',
-      outfile: 'dist/web-asr-core.umd.min.js',
-      sourcemap: true,
-      minify: true,  // Minified version
-      external: [],
-      plugins: [globalsShimPlugin],  // Use globals shim for smaller size
-      define: {
-        'process.env.NODE_ENV': '"production"'
-      },
-      footer: {
-        js: `// UMD wrapper\nif (typeof module === 'object' && typeof module.exports === 'object') {\n  module.exports = WebASRCore;\n} else if (typeof define === 'function' && define.amd) {\n  define([], function() { return WebASRCore; });\n}`
-      }
-    });
-    console.log('✅ Minified UMD bundle created at dist/web-asr-core.umd.min.js');
-
-    // Build ALL-IN-ONE CDN version with dependencies included
-    console.log('\nBuilding ALL-IN-ONE CDN bundle with all dependencies...');
-    await esbuild.build({
-      entryPoints: ['src/index.ts'],
-      bundle: true,
-      format: 'iife',
-      globalName: 'WebASRCore',
-      platform: 'browser',
-      target: 'es2020',
-      outfile: 'dist/web-asr-core.all.js',
-      sourcemap: true,
-      minify: false,
-      external: [],  // Include ALL dependencies
-      plugins: [],   // NO globals shim - bundle everything
-      define: {
-        'process.env.NODE_ENV': '"production"'
-      },
-      footer: {
-        js: `// ALL-IN-ONE bundle - includes onnxruntime-web and transformers\nif (typeof module === 'object' && typeof module.exports === 'object') {\n  module.exports = WebASRCore;\n} else if (typeof define === 'function' && define.amd) {\n  define([], function() { return WebASRCore; });\n}`
-      }
-    });
-    console.log('✅ ALL-IN-ONE CDN bundle created at dist/web-asr-core.all.js');
-
-    // Build minified ALL-IN-ONE CDN version
-    console.log('\nBuilding minified ALL-IN-ONE CDN bundle...');
-    await esbuild.build({
-      entryPoints: ['src/index.ts'],
-      bundle: true,
-      format: 'iife',
-      globalName: 'WebASRCore',
-      platform: 'browser',
-      target: 'es2020',
-      outfile: 'dist/web-asr-core.all.min.js',
-      sourcemap: true,
-      minify: true,
-      external: [],  // Include ALL dependencies
-      plugins: [],   // NO globals shim - bundle everything
-      define: {
-        'process.env.NODE_ENV': '"production"'
-      },
-      footer: {
-        js: `// ALL-IN-ONE bundle - includes onnxruntime-web and transformers\nif (typeof module === 'object' && typeof module.exports === 'object') {\n  module.exports = WebASRCore;\n} else if (typeof define === 'function' && define.amd) {\n  define([], function() { return WebASRCore; });\n}`
-      }
-    });
-    console.log('✅ Minified ALL-IN-ONE CDN bundle created at dist/web-asr-core.all.min.js');
-
-    // 複製 ONNX Runtime sidecar 檔案
-    console.log('\n複製 ONNX Runtime sidecar 檔案...');
-    copyORTFiles();
-
-    // 建立 ULTIMATE 版本 - 包含 Transformers.js
-    console.log('\n建立 ULTIMATE 版本（包含 Transformers.js）...');
-    await buildUltimateVersion();
-
-  } catch (error) {
-    console.error('Build failed:', error);
-    process.exit(1);
-  }
-}
-
-// 複製 ONNX Runtime sidecar 檔案到 dist/
-function copyORTFiles() {
   // 確保 dist 目錄存在
-  if (!existsSync('dist')) {
-    mkdirSync('dist', { recursive: true });
+  const distPath = join(__dirname, 'dist');
+  if (!existsSync(distPath)) {
+    mkdirSync(distPath, { recursive: true });
   }
 
-  const ortFiles = [
+  // 複製必要的 WASM 檔案
+  console.log('📦 複製 WASM 檔案...');
+  const wasmFiles = [
     // 從 @huggingface/transformers 複製
     {
       source: 'node_modules/@huggingface/transformers/dist/ort-wasm-simd-threaded.jsep.mjs',
@@ -249,26 +41,25 @@ function copyORTFiles() {
     }
   ];
 
-  for (const file of ortFiles) {
+  for (const file of wasmFiles) {
     const sourcePath = join(__dirname, file.source);
     const destPath = join(__dirname, file.dest);
 
     if (existsSync(sourcePath)) {
-      try {
-        copyFileSync(sourcePath, destPath);
-        console.log(`  ✓ 複製 ${file.dest.split('/').pop()}`);
-      } catch (err) {
-        console.warn(`  ⚠ 無法複製 ${file.source}:`, err.message);
+      const destDir = dirname(destPath);
+      if (!existsSync(destDir)) {
+        mkdirSync(destDir, { recursive: true });
       }
+      copyFileSync(sourcePath, destPath);
+      console.log(`  ✓ 複製 ${file.dest}`);
+    } else {
+      console.warn(`  ⚠ 找不到來源檔案: ${file.source}`);
     }
   }
-}
 
-// 建立 ULTIMATE 版本
-async function buildUltimateVersion() {
-  // 創建特殊的入口點，包含 Transformers.js 和 ONNX Runtime 並自動設定路徑
-  const ultimateEntryContent = `
-// WebASRCore Ultimate Edition - 自動設定 WASM 路徑版本
+  // 創建統一入口檔案內容（包含自動設定 WASM 路徑功能）
+  const entryContent = `
+// WebASRCore 統一版本 - 包含所有依賴和自動設定
 import * as transformersMod from '@huggingface/transformers';
 import * as ortMod from 'onnxruntime-web';
 
@@ -276,35 +67,41 @@ import * as ortMod from 'onnxruntime-web';
 export * from './index.ts';
 
 // ===== 自動設定 WASM 路徑（在 bundle 載入時立即執行）=====
-(function bootstrapWasmPaths() {
+(() => {
   try {
-    // 1) 計算本 bundle 所在的絕對資料夾 URL
+    const g = globalThis || (typeof window !== 'undefined' ? window : global);
+
+    // 1) 自動偵測 bundle 的位置
     let baseUrl = '';
-    try {
-      // 嘗試從 currentScript 取得
-      if (typeof document !== 'undefined' && document.currentScript && document.currentScript.src) {
-        const scriptUrl = document.currentScript.src;
-        baseUrl = scriptUrl.substring(0, scriptUrl.lastIndexOf('/') + 1);
-      } else if (typeof location !== 'undefined') {
-        // 使用頁面位置作為備用
-        baseUrl = location.origin + location.pathname.substring(0, location.pathname.lastIndexOf('/') + 1);
+
+    // 嘗試從 script 標籤取得路徑
+    if (typeof document !== 'undefined') {
+      const scriptTags = document.querySelectorAll('script[src*="web-asr-core"]');
+      for (const script of scriptTags) {
+        const src = script.src;
+        if (src) {
+          // 提取基礎路徑（移除檔名）
+          baseUrl = src.substring(0, src.lastIndexOf('/') + 1);
+          if (baseUrl.includes('unpkg.com') || baseUrl.includes('jsdelivr.net') || baseUrl.includes('cdn')) {
+            console.log('[WebASRCore] 自動偵測 CDN 位置:', baseUrl);
+          } else {
+            console.log('[WebASRCore] 自動偵測本地位置:', baseUrl);
+          }
+          break;
+        }
       }
-    } catch (e) {
-      // 預設使用 CDN
-      baseUrl = 'https://unpkg.com/web-asr-core@latest/dist/';
     }
 
-    // 如果沒有取得 baseUrl，使用 CDN 作為備用
+    // 如果沒找到，使用預設值
     if (!baseUrl) {
-      baseUrl = 'https://unpkg.com/web-asr-core@latest/dist/';
+      baseUrl = '/dist/';
+      console.log('[WebASRCore] 使用預設路徑:', baseUrl);
     }
 
-    console.log('[WebASRCore Ultimate] 自動偵測 Bundle 位置:', baseUrl);
-
-    // 2) 取得全域實例
-    const g = typeof globalThis !== 'undefined'
-      ? globalThis
-      : (typeof self !== 'undefined' ? self : (typeof window !== 'undefined' ? window : {}));
+    // 2) 確保路徑以 / 結尾
+    if (!baseUrl.endsWith('/')) {
+      baseUrl += '/';
+    }
 
     // 3) 設定 Transformers.js 環境
     if (transformersMod && transformersMod.env) {
@@ -312,29 +109,29 @@ export * from './index.ts';
 
       env.remoteHost = 'https://huggingface.co';
       env.remotePathTemplate = '{model}/resolve/{revision}/';
-      env.allowLocalModels = false;
-      env.allowRemoteModels = true;
-
-      // 初始化巢狀結構
-      env.backends = env.backends || {};
+      env.allowLocalModels = true;
+      env.localModelPath = '/models/';
       env.backends.onnx = env.backends.onnx || {};
       env.backends.onnx.wasm = env.backends.onnx.wasm || {};
-
-      // 🎯 使用「字首字串」而非物件對應 - ONNX 官方推薦做法
-      // 這樣 ONNX 會自動附加檔名，最穩定
       env.backends.onnx.wasm.wasmPaths = baseUrl;
-
-      // 設定其他 ONNX 參數
-      env.backends.onnx.wasm.numThreads =
-        (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 4;
       env.backends.onnx.wasm.simd = true;
 
-      // ⚠️ 不要凍結路徑！讓庫能在不同環境自行調整
+      const numThreads = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency)
+        ? navigator.hardwareConcurrency : 4;
+      env.backends.onnx.wasm.numThreads = numThreads;
+
+      // WebGPU 設定
+      if (env.backends.onnx.webgpu) {
+        const isWindows = (typeof navigator !== 'undefined' && /Windows/.test(navigator.userAgent));
+        if (!isWindows) {
+          env.backends.onnx.webgpu.powerPreference = 'high-performance';
+        }
+      }
     }
 
-    // 4) 設定 ORT（VAD/WakeWord 使用）- 同樣使用字首字串
+    // 4) 設定 ORT（VAD/WakeWord 使用）
     if (ortMod && ortMod.env && ortMod.env.wasm) {
-      ortMod.env.wasm.wasmPaths = baseUrl; // 使用相同的字首字串
+      ortMod.env.wasm.wasmPaths = baseUrl;
       ortMod.env.wasm.simd = true;
       ortMod.env.wasm.numThreads =
         (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) ? navigator.hardwareConcurrency : 4;
@@ -345,8 +142,7 @@ export * from './index.ts';
       }
     }
 
-    // 5) 🎯 重要！同時設定全域 WebASRCore 內的兩個實例
-    // 確保 WebASRCore.transformers 和 WebASRCore.ort 都使用正確路徑
+    // 5) 設定全域 WebASRCore 內的實例
     if (g.WebASRCore) {
       if (g.WebASRCore.transformers && g.WebASRCore.transformers.env) {
         g.WebASRCore.transformers.env.backends = g.WebASRCore.transformers.env.backends || {};
@@ -361,48 +157,55 @@ export * from './index.ts';
       }
     }
 
-    console.log('[WebASRCore Ultimate] ✅ 已載入 - 自動設定 WASM 路徑完成');
-    console.log('[WebASRCore Ultimate] 📍 WASM 檔案位置:', baseUrl);
-
+    console.log('[WebASRCore] ✅ 載入完成 - WASM 路徑已自動設定');
   } catch (e) {
-    console.warn('[WebASRCore Ultimate] WASM 路徑設定警告:', e);
+    console.error('[WebASRCore] 自動設定 WASM 路徑時發生錯誤:', e);
   }
 })();
 
-// 優先使用已存在的全域實例，避免雙重實例問題
-const g = typeof globalThis !== 'undefined'
-  ? globalThis
-  : (typeof self !== 'undefined' ? self : (typeof window !== 'undefined' ? window : {}));
-
-// 統一使用的單一實例（優先使用已存在的全域實例）
+// 統一使用的單一實例
+const g = globalThis || (typeof window !== 'undefined' ? window : global);
 const transformers = (g.WebASRCore && g.WebASRCore.transformers) || g.transformers || transformersMod;
 const ort = (g.WebASRCore && g.WebASRCore.ort) || g.ort || ortMod;
 
-// 暴露到全域，確保外部頁面不會再載入另一份
+// 暴露到全域
 g.WebASRCore = g.WebASRCore || {};
 g.WebASRCore.transformers = transformers;
 g.WebASRCore.ort = ort;
 g.transformers = transformers;
 g.ort = ort;
 
-// 檢測是否有不同版本的實例（可選的警告）
-if (g.transformers && transformersMod && g.transformers !== transformersMod) {
-  try { console.warn('[WebASRCore Ultimate] 偵測到不同的 transformers 模組實例；使用全域單一實例。'); } catch {}
-}
-if (g.ort && ortMod && g.ort !== ortMod) {
-  try { console.warn('[WebASRCore Ultimate] 偵測到不同的 onnxruntime-web 模組實例；使用全域單一實例。'); } catch {}
-}
-
-// 重新匯出解析後的單一實例
+// 重新匯出單一實例
 export { transformers, ort };
 `;
 
   // 寫入臨時入口檔案
-  const tempEntryPath = join(__dirname, 'src', 'ultimate-entry.ts');
-  writeFileSync(tempEntryPath, ultimateEntryContent);
+  const tempEntryPath = join(__dirname, 'src', 'entry.ts');
+  writeFileSync(tempEntryPath, entryContent);
+
+  // 建立 Worker bundle (不包含依賴)
+  console.log('\n📦 建構 Worker...');
+  await esbuild.build({
+    entryPoints: ['src/workers/onnx-inference.worker.ts'],
+    bundle: true,
+    format: 'iife',
+    platform: 'browser',
+    target: 'es2020',
+    outfile: 'dist/onnx-inference.worker.js',
+    loader: {
+      '.ts': 'ts'
+    },
+    external: [],  // Worker 需要包含所有依賴
+    plugins: [],
+    define: {
+      'process.env.NODE_ENV': '"production"'
+    }
+  });
+  console.log('  ✓ 建立 onnx-inference.worker.js');
 
   try {
-    // 建立 ULTIMATE IIFE 版本
+    // 建立主要 bundle
+    console.log('\n📦 建構主要 Bundle...');
     await esbuild.build({
       entryPoints: [tempEntryPath],
       bundle: true,
@@ -410,18 +213,18 @@ export { transformers, ort };
       globalName: 'WebASRCore',
       platform: 'browser',
       target: 'es2020',
-      outfile: 'dist/web-asr-core.ultimate.js',
-      external: [],  // 不設定任何 external，全部打包
+      outfile: 'dist/web-asr-core.js',
+      external: [],  // 包含所有依賴
       define: {
         'process.env.NODE_ENV': '"production"',
-        'import.meta.url': 'undefined'  // 避免 import.meta 錯誤
+        'import.meta.url': 'undefined'
       },
       loader: {
         '.wasm': 'file'
       },
       plugins: [],
     });
-    console.log('  ✓ 建立 web-asr-core.ultimate.js');
+    console.log('  ✓ 建立 web-asr-core.js');
 
     // 建立壓縮版本
     await esbuild.build({
@@ -431,7 +234,7 @@ export { transformers, ort };
       globalName: 'WebASRCore',
       platform: 'browser',
       target: 'es2020',
-      outfile: 'dist/web-asr-core.ultimate.min.js',
+      outfile: 'dist/web-asr-core.min.js',
       external: [],
       minify: true,
       define: {
@@ -443,7 +246,28 @@ export { transformers, ort };
       },
       plugins: [],
     });
-    console.log('  ✓ 建立 web-asr-core.ultimate.min.js');
+    console.log('  ✓ 建立 web-asr-core.min.js');
+
+    // 為了相容性，也創建 bundle.js（指向主要版本）
+    await esbuild.build({
+      entryPoints: [tempEntryPath],
+      bundle: true,
+      format: 'iife',
+      globalName: 'WebASRCore',
+      platform: 'browser',
+      target: 'es2020',
+      outfile: 'dist/web-asr-core.bundle.js',
+      external: [],
+      define: {
+        'process.env.NODE_ENV': '"production"',
+        'import.meta.url': 'undefined'
+      },
+      loader: {
+        '.wasm': 'file'
+      },
+      plugins: [],
+    });
+    console.log('  ✓ 建立 web-asr-core.bundle.js（相容性）');
 
   } finally {
     // 清理臨時檔案
@@ -453,6 +277,18 @@ export { transformers, ort };
       // 忽略錯誤
     }
   }
+
+  console.log('\n✅ 建構完成！\n');
+  console.log('📦 產生的檔案：');
+  console.log('  - dist/web-asr-core.js         (完整版)');
+  console.log('  - dist/web-asr-core.min.js     (壓縮版)');
+  console.log('  - dist/web-asr-core.bundle.js  (相容性)');
+  console.log('  - dist/onnx-inference.worker.js');
+  console.log('  - dist/*.wasm (WASM 檔案)');
+  console.log('\n使用方式：');
+  console.log('  CDN: <script src="https://unpkg.com/web-asr-core/dist/web-asr-core.min.js"></script>');
+  console.log('  NPM: import * as WebASRCore from "web-asr-core"');
+  console.log('\n');
 }
 
 build();

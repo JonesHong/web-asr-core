@@ -1,8 +1,8 @@
-# WebASRCore Event Architecture v2.0
+# WebASRCore Event Architecture 
 
 ## 概述
 
-本文件描述 WebASRCore 的事件系統架構 v2.0 版本。此版本不考慮向後相容性，採用服務類別包裝的設計模式，提供更優雅的事件訂閱 API，同時保持核心處理函數的無狀態特性。
+本文件描述 WebASRCore 的事件系統架構。此版本不考慮向後相容性，採用服務類別包裝的設計模式，提供更優雅的事件訂閱 API，同時保持核心處理函數的無狀態特性。
 
 ## 核心設計原則
 

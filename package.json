@@ -1,26 +1,23 @@
 {
   "name": "web-asr-core",
-  "version": "0.7.1",
-  "description": "WebASR Core - Browser-based speech processing with VAD, WakeWord and Whisper (includes ULTIMATE all-in-one CDN version)",
+  "version": "0.8.1",
+  "description": "WebASR Core - Browser-based speech processing with VAD, WakeWord and Whisper - Unified all-in-one version",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
-  "unpkg": "dist/web-asr-core.ultimate.min.js",
-  "jsdelivr": "dist/web-asr-core.ultimate.min.js",
+  "unpkg": "dist/web-asr-core.min.js",
+  "jsdelivr": "dist/web-asr-core.min.js",
   "exports": {
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.js",
-      "browser": "./dist/web-asr-core.ultimate.min.js"
+      "browser": "./dist/web-asr-core.min.js"
     },
-    "./slim": "./dist/web-asr-core.umd.min.js",
-    "./all": "./dist/web-asr-core.all.min.js",
-    "./ultimate": "./dist/web-asr-core.ultimate.min.js",
-    "./ort/*.wasm": "./dist/*.wasm",
-    "./ort/*.mjs": "./dist/*.mjs"
+    "./dist/*.wasm": "./dist/*.wasm",
+    "./dist/*.mjs": "./dist/*.mjs"
   },
-  "browser": "dist/web-asr-core.umd.js",
+  "browser": "dist/web-asr-core.js",
   "files": [
     "dist/**/*",
     "README.md",

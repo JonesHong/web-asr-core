@@ -1,0 +1,19 @@
+{
+  "name": "web-asr-core-npm-test",
+  "version": "1.0.0",
+  "description": "Test npm installation of web-asr-core",
+  "type": "module",
+  "scripts": {
+    "start": "http-server -p 8080 --cors -c-1",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "web-asr-core": "^0.8.1"
+  },
+  "devDependencies": {
+    "http-server": "^14.1.1",
+    "vite": "^5.0.0"
+  }
+}

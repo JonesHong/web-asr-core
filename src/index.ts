@@ -16,6 +16,20 @@
 // 匯出所有類型定義
 export * from './types';
 
+// 匯出事件枚舉 (Event Architecture v2)
+export {
+  BaseEvents,
+  SpeechEvents,
+  TimerEvents,
+  VadEvents,
+  WakewordEvents,
+  WhisperEvents,
+  type AllEvents,
+  type EventDataMap,
+  getServiceEvents,
+  isServiceEvent
+} from './types/events';
+
 // ===== Event Architecture v2 匯出 =====
 
 // 匯出基礎 EventEmitter
@@ -24,33 +38,48 @@ export {
   createEventEmitter,
 } from './core/EventEmitter';
 
+// 匯出 EventBus 系統
+export {
+  EventBus,
+  EventStream,
+  Subscription,
+  EventBusDevTools,
+  eventBus,
+  events$,
+  type EventPayload,
+  type EventFilter,
+  type EventMapper,
+  type SubscriptionOptions
+} from './core/EventBus';
+
+// 匯出 BusEnabledEventEmitter
+export {
+  BusEnabledEventEmitter,
+  type BusIntegrationOptions
+} from './core/BusEnabledEventEmitter';
+
 // 匯出事件驅動服務類別
 export {
   VadService,
-  type VadEvents,
   type VadServiceOptions,
 } from './services/VadService';
 
 export {
   WakewordService,
-  type WakewordEvents,
   type WakewordServiceOptions,
 } from './services/WakewordService';
 
 export {
   WhisperService,
-  type WhisperEvents,
   type WhisperServiceOptions,
 } from './services/WhisperService';
 
 export {
   TimerService,
-  type TimerEvents,
 } from './services/TimerService';
 
 export {
   SpeechService,
-  type SpeechEvents,
 } from './services/SpeechService';
 
 // ===== 原有無狀態函數匯出（保持向後相容） =====

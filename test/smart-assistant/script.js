@@ -91,6 +91,10 @@ class SmartVoiceAssistant {
             this.uiManager.setControlsEnabled(true);
         });
 
+        this.assistantCore.addEventListener('tts-voices', (e) => {
+            this.uiManager.populateTTSVoices(e.detail);
+        });
+
         this.assistantCore.addEventListener('error', (e) => {
             this.uiManager.updateServiceStatus('vad', 'error');
             this.uiManager.updateServiceStatus('wakeword', 'error');
@@ -124,6 +128,13 @@ class SmartVoiceAssistant {
 
         this.uiManager.addEventListener('custom-model', (e) => {
             this.assistantCore.loadCustomModel(e.detail.file);
+        });
+
+        this.uiManager.addEventListener('tts-config-change', (e) => {
+            const { type, value } = e.detail;
+            const settings = {};
+            settings[type] = value;
+            this.assistantCore.updateTTSSettings(settings);
         });
     }
 

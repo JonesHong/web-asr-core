@@ -1,5 +1,5 @@
 /**
- * UI 管理模組 - 處理所有使用者介面相關邏輯
+ * UI 管理模組 - 處理所有使用者介面相關邏輯（Warm Neutrals 版）
  */
 class UIManager extends EventTarget {
     constructor() {
@@ -11,18 +11,12 @@ class UIManager extends EventTarget {
         this.audioDataBufferIndex = 0;
     }
 
-    /**
-     * 初始化 UI 元素和事件監聽器
-     */
     initialize() {
         this.initializeElements();
         this.bindEvents();
         this.initAudioVisualization();
     }
 
-    /**
-     * 初始化所有 UI 元素參考
-     */
     initializeElements() {
         this.ui = {
             // 狀態相關
@@ -47,6 +41,13 @@ class UIManager extends EventTarget {
             customModelInput: document.getElementById('customModelInput'),
             uploadModelBtn: document.getElementById('uploadModelBtn'),
 
+            // TTS 設定
+            ttsVoiceSelect: document.getElementById('ttsVoiceSelect'),
+            ttsRateSlider: document.getElementById('ttsRateSlider'),
+            ttsRateValue: document.getElementById('ttsRateValue'),
+            ttsPitchSlider: document.getElementById('ttsPitchSlider'),
+            ttsPitchValue: document.getElementById('ttsPitchValue'),
+
             // 識別結果
             interimTranscript: document.getElementById('interimTranscript'),
             finalTranscript: document.getElementById('finalTranscript'),
@@ -70,23 +71,17 @@ class UIManager extends EventTarget {
         };
     }
 
-    /**
-     * 綁定 UI 事件
-     */
     bindEvents() {
-        // 控制按鈕
         if (this.ui.wakeBtn) {
             this.ui.wakeBtn.addEventListener('click', () => {
                 this.dispatchEvent(new CustomEvent('manual-wake'));
             });
         }
-
         if (this.ui.sleepBtn) {
             this.ui.sleepBtn.addEventListener('click', () => {
                 this.dispatchEvent(new CustomEvent('manual-sleep'));
             });
         }
-
         if (this.ui.clearLogBtn) {
             this.ui.clearLogBtn.addEventListener('click', () => this.clearLog());
         }
@@ -116,8 +111,8 @@ class UIManager extends EventTarget {
         // 靜音超時調整
         if (this.ui.silenceTimeout) {
             this.ui.silenceTimeout.addEventListener('input', (e) => {
-                const value = parseInt(e.target.value);
-                this.ui.silenceTimeoutValue.textContent = value;
+                const value = parseFloat(e.target.value);
+                this.ui.silenceTimeoutValue.textContent = value.toFixed(1);
                 this.dispatchEvent(new CustomEvent('config-change', {
                     detail: { type: 'silenceTimeout', value: value * 1000 }
                 }));
@@ -145,7 +140,6 @@ class UIManager extends EventTarget {
                 this.ui.customModelInput.click();
             });
         }
-
         if (this.ui.customModelInput) {
             this.ui.customModelInput.addEventListener('change', (e) => {
                 const file = e.target.files[0];
@@ -156,32 +150,56 @@ class UIManager extends EventTarget {
                 }
             });
         }
+
+        // TTS 語音選擇
+        if (this.ui.ttsVoiceSelect) {
+            this.ui.ttsVoiceSelect.addEventListener('change', (e) => {
+                const voice = e.target.value;
+                this.dispatchEvent(new CustomEvent('tts-config-change', {
+                    detail: { type: 'voice', value: voice }
+                }));
+            });
+        }
+
+        // TTS 速度調整
+        if (this.ui.ttsRateSlider) {
+            this.ui.ttsRateSlider.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                this.ui.ttsRateValue.textContent = value.toFixed(1);
+                this.dispatchEvent(new CustomEvent('tts-config-change', {
+                    detail: { type: 'rate', value }
+                }));
+            });
+        }
+
+        // TTS 音調調整
+        if (this.ui.ttsPitchSlider) {
+            this.ui.ttsPitchSlider.addEventListener('input', (e) => {
+                const value = parseFloat(e.target.value);
+                this.ui.ttsPitchValue.textContent = value.toFixed(1);
+                this.dispatchEvent(new CustomEvent('tts-config-change', {
+                    detail: { type: 'pitch', value }
+                }));
+            });
+        }
     }
 
-    /**
-     * 取得當前配置值
-     */
     getConfig() {
         return {
             vadThreshold: parseFloat(this.ui.vadThreshold?.value || 0.5),
             wakewordThreshold: parseFloat(this.ui.wakewordThreshold?.value || 0.6),
-            silenceTimeout: parseInt(this.ui.silenceTimeout?.value || 5) * 1000,
+            silenceTimeout: parseFloat(this.ui.silenceTimeout?.value || 1.8) * 1000,
             wakewordModel: this.ui.wakewordModel?.value || 'hey-jarvis'
         };
     }
 
-    /**
-     * 更新狀態 UI
-     */
     updateState(state) {
         const indicator = this.ui.stateIndicator;
         const icon = this.ui.stateIcon;
         const text = this.ui.stateText;
         const soundWave = this.ui.soundWave;
-
         if (!indicator || !icon || !text) return;
 
-        // 移除所有狀態類別
         indicator.classList.remove('state-idle', 'state-listening', 'state-processing', 'listening-animation');
 
         switch (state) {
@@ -206,28 +224,15 @@ class UIManager extends EventTarget {
         }
     }
 
-    /**
-     * 更新服務狀態顯示
-     */
     updateServiceStatus(service, status) {
         let element;
         switch (service) {
-            case 'vad':
-                element = this.ui.vadStatus;
-                break;
-            case 'wakeword':
-                element = this.ui.wakewordStatus;
-                break;
-            case 'stt':
-                element = this.ui.sttStatus;
-                break;
-            case 'webgpu':
-                element = this.ui.webgpuStatus;
-                break;
-            default:
-                return;
+            case 'vad': element = this.ui.vadStatus; break;
+            case 'wakeword': element = this.ui.wakewordStatus; break;
+            case 'stt': element = this.ui.sttStatus; break;
+            case 'webgpu': element = this.ui.webgpuStatus; break;
+            default: return;
         }
-
         if (!element) return;
 
         let icon = '';
@@ -235,25 +240,25 @@ class UIManager extends EventTarget {
 
         switch (status) {
             case 'ready':
-                icon = 'fas fa-circle text-green-500';
-                color = 'text-green-700';
+                icon = 'fas fa-circle text-[var(--sage)]';
+                color = 'text-[var(--text)]';
                 break;
             case 'active':
             case 'listening':
-                icon = 'fas fa-circle text-blue-500';
-                color = 'text-blue-700';
+                icon = 'fas fa-circle text-[var(--butter)]';
+                color = 'text-[var(--text)]';
                 break;
             case 'error':
-                icon = 'fas fa-circle text-red-500';
+                icon = 'fas fa-circle text-red-400';
                 color = 'text-red-700';
                 break;
             case 'unavailable':
-                icon = 'fas fa-circle text-gray-400';
-                color = 'text-gray-500';
+                icon = 'fas fa-circle text-[color:var(--text)]/30';
+                color = 'text-[color:var(--text)]/60';
                 break;
             default:
-                icon = 'fas fa-circle text-gray-400';
-                color = 'text-gray-700';
+                icon = 'fas fa-circle text-[color:var(--text)]/30';
+                color = 'text-[var(--text)]';
         }
 
         const statusText = this.getStatusText(status);
@@ -261,9 +266,6 @@ class UIManager extends EventTarget {
         element.className = `text-sm font-semibold ${color}`;
     }
 
-    /**
-     * 取得狀態文字
-     */
     getStatusText(status) {
         const statusMap = {
             'ready': '就緒',
@@ -275,9 +277,6 @@ class UIManager extends EventTarget {
         return statusMap[status] || status;
     }
 
-    /**
-     * 更新計時器顯示
-     */
     updateTimer(type, current, max) {
         if (type === 'silence') {
             const remaining = max - current;
@@ -299,75 +298,56 @@ class UIManager extends EventTarget {
         }
     }
 
-    /**
-     * 更新臨時轉錄文字
-     */
     updateInterimTranscript(text) {
         if (this.ui.interimTranscript) {
             this.ui.interimTranscript.textContent = text;
         }
     }
 
-    /**
-     * 新增最終轉錄文字
-     */
     addFinalTranscript(text) {
         if (this.ui.finalTranscript) {
-            this.ui.finalTranscript.innerHTML += `<div class="mb-2 p-2 bg-white rounded">${text}</div>`;
+            this.ui.finalTranscript.innerHTML += `<div class="mb-2 p-2 bg-[var(--cream)] text-[var(--text)] rounded">${text}</div>`;
         }
     }
 
-    /**
-     * 清空臨時轉錄
-     */
     clearInterimTranscript() {
         if (this.ui.interimTranscript) {
             this.ui.interimTranscript.textContent = '等待語音輸入...';
         }
     }
 
-    /**
-     * 啟用/禁用控制按鈕
-     */
     setControlsEnabled(enabled) {
         if (this.ui.wakeBtn) this.ui.wakeBtn.disabled = !enabled;
         if (this.ui.sleepBtn) this.ui.sleepBtn.disabled = !enabled;
     }
 
-    /**
-     * 記錄日誌
-     */
     log(message, type = 'info') {
         if (!this.ui.eventLog) {
             console.log(`[${type.toUpperCase()}] ${message}`);
             return;
         }
-
-        const timestamp = new Date().toLocaleTimeString('zh-TW');
+        const now = new Date();
+        const time = now.toLocaleTimeString('zh-TW');
+        const ms = now.getMilliseconds().toString().padStart(3, '0');
+        const timestamp = `${time}.${ms}`;
         const logEntry = document.createElement('div');
         logEntry.className = `p-2 rounded text-sm ${this.getLogClass(type)}`;
-        logEntry.innerHTML = `<span class="text-xs text-gray-500">[${timestamp}]</span> ${message}`;
+        logEntry.innerHTML = `<span class="text-xs text-[color:var(--text)]/50">[${timestamp}]</span> ${message}`;
 
         this.ui.eventLog.appendChild(logEntry);
         this.ui.eventLog.scrollTop = this.ui.eventLog.scrollHeight;
     }
 
-    /**
-     * 取得日誌樣式
-     */
     getLogClass(type) {
         const classes = {
-            'info': 'bg-blue-50 text-blue-800',
-            'success': 'bg-green-50 text-green-800',
-            'warning': 'bg-yellow-50 text-yellow-800',
-            'error': 'bg-red-50 text-red-800'
+            'info': 'bg-[#EED9C4] text-[#2F2A24]',
+            'success': 'bg-[#A3B18A] text-[#2F2A24]',
+            'warning': 'bg-[#F6E27D] text-[#2F2A24]',
+            'error': 'bg-[#F2D6D0] text-[#2F2A24]'
         };
         return classes[type] || classes['info'];
     }
 
-    /**
-     * 清除日誌
-     */
     clearLog() {
         if (this.ui.eventLog) {
             this.ui.eventLog.innerHTML = '';
@@ -375,13 +355,20 @@ class UIManager extends EventTarget {
         }
     }
 
-    /**
-     * 初始化音訊視覺化
-     */
+    /* ===== 音訊視覺化 ===== */
+
+    getCSSVar(name, fallback) {
+        try {
+            const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+            return v || fallback;
+        } catch {
+            return fallback;
+        }
+    }
+
     initAudioVisualization() {
         try {
             if (!this.ui.audioCanvas) return;
-
             this.canvasCtx = this.ui.audioCanvas.getContext('2d');
             this.audioDataBuffer = new Float32Array(256);
             this.audioDataBufferIndex = 0;
@@ -391,14 +378,9 @@ class UIManager extends EventTarget {
         }
     }
 
-    /**
-     * 更新音訊視覺化資料
-     */
     updateAudioVisualization(audioData) {
         if (!this.audioDataBuffer) return;
-
         const copyLength = Math.min(audioData.length, this.audioDataBuffer.length);
-
         if (copyLength < this.audioDataBuffer.length) {
             this.audioDataBuffer.copyWithin(0, copyLength);
             this.audioDataBuffer.set(audioData.slice(0, copyLength), this.audioDataBuffer.length - copyLength);
@@ -407,9 +389,6 @@ class UIManager extends EventTarget {
         }
     }
 
-    /**
-     * 繪製音訊視覺化
-     */
     drawVisualization() {
         if (!this.canvasCtx) return;
 
@@ -421,7 +400,11 @@ class UIManager extends EventTarget {
             const width = canvas.width = canvas.offsetWidth;
             const height = canvas.height = canvas.offsetHeight;
 
-            this.canvasCtx.fillStyle = 'rgb(17, 24, 39)';
+            const textColor = this.getCSSVar('--text', '#2F2A24');
+            const sage = this.getCSSVar('--sage', '#A3B18A');
+            const butter = this.getCSSVar('--butter', '#F6E27D');
+
+            this.canvasCtx.fillStyle = textColor;
             this.canvasCtx.fillRect(0, 0, width, height);
 
             const barCount = dataArray.length / 4;
@@ -434,29 +417,22 @@ class UIManager extends EventTarget {
                 const groupSize = 4;
                 for (let j = 0; j < groupSize; j++) {
                     const idx = i * groupSize + j;
-                    if (idx < dataArray.length) {
-                        sum += Math.abs(dataArray[idx]);
-                    }
+                    if (idx < dataArray.length) sum += Math.abs(dataArray[idx]);
                 }
                 barHeight = (sum / groupSize) * height * 5;
 
                 const gradient = this.canvasCtx.createLinearGradient(0, height, 0, height - barHeight);
-                gradient.addColorStop(0, 'rgb(99, 102, 241)');
-                gradient.addColorStop(1, 'rgb(139, 92, 246)');
+                gradient.addColorStop(0, sage);
+                gradient.addColorStop(1, butter);
 
                 this.canvasCtx.fillStyle = gradient;
                 this.canvasCtx.fillRect(x, height - barHeight, barWidth, barHeight);
-
                 x += barWidth + 1;
             }
         };
-
         draw();
     }
 
-    /**
-     * 播放音效
-     */
     playSound(type) {
         try {
             const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -481,9 +457,27 @@ class UIManager extends EventTarget {
         }
     }
 
-    /**
-     * 清理資源
-     */
+    populateTTSVoices(voices) {
+        if (!this.ui.ttsVoiceSelect) return;
+
+        // 清除現有選項
+        this.ui.ttsVoiceSelect.innerHTML = '<option value="">預設語音</option>';
+
+        // 加入語音選項
+        voices.forEach(voice => {
+            const option = document.createElement('option');
+            option.value = voice.name;
+            option.textContent = `${voice.name} (${voice.lang})`;
+
+            // 預選中文語音
+            if (voice.lang.startsWith('zh')) {
+                option.selected = true;
+            }
+
+            this.ui.ttsVoiceSelect.appendChild(option);
+        });
+    }
+
     destroy() {
         if (this.animationId) {
             cancelAnimationFrame(this.animationId);

@@ -9,6 +9,7 @@ import { EventEmitter } from '../core/EventEmitter';
 import { AudioChunker } from '../utils/AudioChunker';
 import { AudioRingBuffer } from '../utils/AudioRingBuffer';
 import { ConfigManager } from '../utils/config-manager';
+import { WhisperEvents } from '../types/events';
 import type { WhisperResources, WhisperOptions, WhisperResult, WhisperStreamCallbacks } from '../types';
 import {
   loadWhisperResources,
@@ -31,64 +32,6 @@ export interface WhisperServiceOptions {
   minAudioLength?: number;
 }
 
-/**
- * Whisper 服務事件定義
- */
-export interface WhisperEvents {
-  ready: {
-    modelId: string;
-    config: {
-      sampleRate: number;
-      language?: string;
-      temperature: number;
-      maxLength: number;
-    };
-    timestamp: number;
-  };
-  transcriptionStart: {
-    timestamp: number;
-    audioLength: number;
-  };
-  transcriptionComplete: {
-    text: string;
-    duration: number;
-    segments?: any[];
-    timestamp: number;
-  };
-  transcriptionProgress: {
-    progress: number;
-    partialText?: string;
-    timestamp: number;
-  };
-  // 串流事件
-  streamChunkStart: {
-    timestamp: number;
-  };
-  streamPartial: {
-    partial: string;
-    committed: string;
-    timestamp: number;
-  };
-  streamChunkEnd: {
-    committed: string;
-    timestamp: number;
-  };
-  streamFinalize: {
-    text: string;
-    timestamp: number;
-  };
-  statistics: {
-    totalTranscriptions: number;
-    averageTranscriptionTime: number;
-    totalAudioProcessed: number;
-    charactersTranscribed: number;
-  };
-  error: {
-    error: Error;
-    context: string;
-    timestamp: number;
-  };
-}
 
 /**
  * WhisperService - 事件驅動的語音識別服務
@@ -103,11 +46,11 @@ export interface WhisperEvents {
  * });
  * 
  * // 訂閱事件
- * whisper.on('transcriptionComplete', ({ text, duration }) => {
+ * whisper.on(WhisperEvents.TRANSCRIPTION_COMPLETE, ({ text, duration }) => {
  *   console.log(`Transcription: ${text} (took ${duration}ms)`);
  * });
  * 
- * whisper.on('transcriptionProgress', ({ progress }) => {
+ * whisper.on(WhisperEvents.TRANSCRIPTION_PROGRESS, ({ progress }) => {
  *   console.log(`Progress: ${progress}%`);
  * });
  * 
@@ -119,7 +62,7 @@ export interface WhisperEvents {
  * console.log(result.text);
  * ```
  */
-export class WhisperService extends EventEmitter<WhisperEvents> {
+export class WhisperService extends EventEmitter<any> {
   private pipeline: any = null;
   private modelId: string = '';
   private config = ConfigManager.getInstance();
@@ -148,13 +91,13 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
   private setupStreamEventListeners(): void {
     // 監聽串流相關事件並轉發
     whisperEvents.addEventListener('stream-chunk-start', (event: any) => {
-      this.emit('streamChunkStart', {
+      this.emit(WhisperEvents.STREAM_CHUNK_START, {
         timestamp: event.detail?.timestamp || Date.now()
       });
     });
 
     whisperEvents.addEventListener('stream-partial', (event: any) => {
-      this.emit('streamPartial', {
+      this.emit(WhisperEvents.STREAM_PARTIAL, {
         partial: event.detail?.partial || '',
         committed: event.detail?.committed || '',
         timestamp: Date.now()
@@ -162,14 +105,14 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
     });
 
     whisperEvents.addEventListener('stream-chunk-end', (event: any) => {
-      this.emit('streamChunkEnd', {
+      this.emit(WhisperEvents.STREAM_CHUNK_END, {
         committed: event.detail?.committed || '',
         timestamp: event.detail?.timestamp || Date.now()
       });
     });
 
     whisperEvents.addEventListener('stream-finalize', (event: any) => {
-      this.emit('streamFinalize', {
+      this.emit(WhisperEvents.STREAM_FINALIZE, {
         text: event.detail?.text || '',
         timestamp: event.detail?.timestamp || Date.now()
       });
@@ -193,7 +136,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
       this.chunker = AudioChunker.forWhisper();
       
       // 發射 ready 事件
-      this.emit('ready', {
+      this.emit(WhisperEvents.READY, {
         modelId: this.modelId,
         config: {
           sampleRate: this.config.audio.sampleRate,
@@ -204,7 +147,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
         timestamp: Date.now()
       });
     } catch (error) {
-      this.emit('error', {
+      this.emit(WhisperEvents.ERROR, {
         error: error as Error,
         context: 'initialize',
         timestamp: Date.now()
@@ -232,7 +175,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
 
     try {
       // 發射開始事件
-      this.emit('transcriptionStart', {
+      this.emit(WhisperEvents.TRANSCRIPTION_START, {
         timestamp: startTime,
         audioLength
       });
@@ -258,7 +201,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
       this.updateStatistics(duration, audioLength, result.text.length);
 
       // 發射完成事件
-      this.emit('transcriptionComplete', {
+      this.emit(WhisperEvents.TRANSCRIPTION_COMPLETE, {
         text: result.text,
         duration,
         segments: result.segments,
@@ -267,7 +210,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
 
       return result;
     } catch (error) {
-      this.emit('error', {
+      this.emit(WhisperEvents.ERROR, {
         error: error as Error,
         context: 'transcribe',
         timestamp: Date.now()
@@ -295,7 +238,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
 
     try {
       // 發射開始事件
-      this.emit('transcriptionStart', {
+      this.emit(WhisperEvents.TRANSCRIPTION_START, {
         timestamp: startTime,
         audioLength
       });
@@ -323,7 +266,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
       this.updateStatistics(duration, audioLength, result.text.length);
 
       // 發射完成事件
-      this.emit('transcriptionComplete', {
+      this.emit(WhisperEvents.TRANSCRIPTION_COMPLETE, {
         text: result.text,
         duration,
         segments: result.segments,
@@ -332,7 +275,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
 
       return result;
     } catch (error) {
-      this.emit('error', {
+      this.emit(WhisperEvents.ERROR, {
         error: error as Error,
         context: 'transcribeWithStreaming',
         timestamp: Date.now()
@@ -365,7 +308,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
     const startTime = Date.now();
     const totalChunks = chunks.length;
     
-    this.emit('transcriptionStart', {
+    this.emit(WhisperEvents.TRANSCRIPTION_START, {
       timestamp: startTime,
       audioLength: audio.length / this.config.audio.sampleRate * 1000
     });
@@ -374,7 +317,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
       const progress = ((i + 1) / totalChunks) * 100;
       
       // 發射進度事件
-      this.emit('transcriptionProgress', {
+      this.emit(WhisperEvents.TRANSCRIPTION_PROGRESS, {
         progress,
         partialText: results.join(' '),
         timestamp: Date.now()
@@ -396,7 +339,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
     const duration = Date.now() - startTime;
     
     // 發射完成事件
-    this.emit('transcriptionComplete', {
+    this.emit(WhisperEvents.TRANSCRIPTION_COMPLETE, {
       text: finalText,
       duration,
       segments: allSegments.length > 0 ? allSegments : undefined,
@@ -456,7 +399,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
     for (let i = 0; i < audioSegments.length; i++) {
       const progress = ((i + 1) / audioSegments.length) * 100;
       
-      this.emit('transcriptionProgress', {
+      this.emit(WhisperEvents.TRANSCRIPTION_PROGRESS, {
         progress,
         timestamp: Date.now()
       });
@@ -500,7 +443,7 @@ export class WhisperService extends EventEmitter<WhisperEvents> {
     // 每 5 秒發射一次統計事件
     const now = Date.now();
     if (now - this.stats.lastStatsEmit > 5000) {
-      this.emit('statistics', {
+      this.emit(WhisperEvents.STATISTICS, {
         totalTranscriptions: this.stats.totalTranscriptions,
         averageTranscriptionTime: this.stats.totalTranscriptionTime / this.stats.totalTranscriptions,
         totalAudioProcessed: this.stats.totalAudioProcessed,

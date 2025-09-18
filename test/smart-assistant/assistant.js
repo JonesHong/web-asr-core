@@ -33,8 +33,15 @@ class AssistantCore extends EventTarget {
         this.wakewordBuffer = null;
         this.wakewordBufferIndex = 0;
 
-        // 計時器標記
-        this.silenceTimerActive = false;
+        // Transcript 緩衝機制
+        this.pendingTranscript = null;  // 暫存待處理的transcript
+        this.collectingTranscript = false;  // 是否正在收集語音
+
+        // TTS 播放狀態
+        this.isSpeaking = false;  // 是否正在播放TTS
+
+        // 無活動計時器
+        this.inactivityTimer = null;
 
         // 配置參數
         this.config = {
@@ -42,8 +49,8 @@ class AssistantCore extends EventTarget {
             vadDebounce: 1000,
             wakewordThreshold: 0.6,
             wakewordModel: 'hey-jarvis',
-            silenceTimeout: 5000,
-            maxListeningTime: 30000,
+            silenceTimeout: 1800,  // 1.8 秒
+            maxListeningTime: -1,  // -1 表示永不停止
             sttLanguage: 'zh-TW',
             sttContinuous: true,
             sttInterimResults: true
@@ -54,8 +61,8 @@ class AssistantCore extends EventTarget {
 
         // 計時器設定
         this.timers = {
-            silence: { max: 5 },
-            maxListening: { max: 30 }
+            silence: { max: 1.8 },  // 1.8 秒
+            maxListening: { max: -1 }  // -1 表示永不停止
         };
     }
 
@@ -192,11 +199,24 @@ class AssistantCore extends EventTarget {
         this.emit('log', '初始化 Speech Service...', 'info');
         this.speechService = new WebASRCore.SpeechService();
 
+        // TTS 設定
+        this.ttsSettings = {
+            voice: '',  // 預設語音
+            rate: 1.8,
+            pitch: 1.0
+        };
+
         await new Promise((resolve) => {
             this.speechService.once('ready', (data) => {
                 this.emit('log', `✅ Speech API 初始化成功`, 'success');
                 this.emit('log', `TTS 支援: ${data.ttsSupported}, STT 支援: ${data.sttSupported}`, 'info');
                 this.emit('service-status', { service: 'stt', status: 'ready' });
+
+                // 發送可用語音列表
+                if (data.ttsSupported && data.voices) {
+                    this.emit('tts-voices', data.voices);
+                }
+
                 resolve();
             });
         });
@@ -249,44 +269,95 @@ class AssistantCore extends EventTarget {
     setupEventListeners() {
         // 喚醒詞檢測
         this.wakewordService.on('wakewordDetected', (data) => {
-            this.emit('log', `🎯 檢測到喚醒詞 "${data.word}" (信心度: ${data.score.toFixed(2)})`, 'success');
-            if (this.state === 'idle') {
-                this.wakeUp();
+            // 加入時間戳檢查，避免處理過時的事件
+            const now = Date.now();
+            if (!this.lastWakewordTime || now - this.lastWakewordTime > 500) {
+                this.lastWakewordTime = now;
+                this.emit('log', `🎯 檢測到喚醒詞 "${data.word}" (信心度: ${data.score.toFixed(2)})`, 'success');
+
+                // 只在閒置狀態且未醒來時才喚醒
+                if (this.state === 'idle' && !this.isAwake) {
+                    this.wakeUp();
+                }
             }
         });
 
         // VAD 事件
         this.vadService.on('speechStart', (event) => {
+            // TTS播放期間忽略VAD事件
+            if (this.isSpeaking) {
+                return;
+            }
             if (this.isAwake) {
                 this.emit('log', '🎤 檢測到語音活動', 'info');
                 this.emit('service-status', { service: 'vad', status: 'active' });
 
-                if (this.timerService.getTimerState('silenceTimer')) {
-                    this.timerService.pause('silenceTimer');
-                    this.timerService.reset('silenceTimer');
-                    this.emit('timer-update', { type: 'silence', current: 0, max: this.timers.silence.max });
-                    this.silenceTimerActive = false;
+                // 清除無活動計時器，因為有語音活動了
+                if (this.inactivityTimer) {
+                    clearTimeout(this.inactivityTimer);
+                    this.inactivityTimer = null;
                 }
+
+                // 停止靜音計時器，正在說話中
+                if (this.timerService && this.timerService.getTimerState('silenceTimer')) {
+                    this.emit('log', '⏸️ 停止靜音計時器（偵測到語音）', 'info');
+                    this.timerService.stop('silenceTimer');
+                    this.emit('timer-update', { type: 'silence', current: 0, max: this.timers.silence.max });
+                }
+
+                // 清除待處理的transcript，因為又開始說話了
+                if (this.pendingTranscript) {
+                    this.emit('log', '🔄 清除待處理指令，繼續聆聽', 'info');
+                    this.pendingTranscript = null;
+                }
+                this.collectingTranscript = true;
             }
         });
 
         this.vadService.on('speechEnd', (event) => {
-            if (this.isAwake) {
+            // TTS播放期間忽略VAD事件
+            if (this.isSpeaking) {
+                return;
+            }
+            if (this.isAwake && this.state === 'listening') {
                 this.emit('log', '🔇 語音活動結束', 'info');
                 this.emit('service-status', { service: 'vad', status: 'ready' });
-                this.startSilenceTimer();
+
+                // 根據是否有待處理的transcript決定是否啟動靜音計時器
+                if (this.pendingTranscript) {
+                    this.emit('log', '⏱️ 有待處理指令，啟動靜音計時器', 'info');
+                    this.startSilenceTimer();
+                } else {
+                    this.emit('log', '⏳ 等待最終識別結果...', 'info');
+                    // 也啟動靜音計時器，如果沒有收到識別結果就返回閒置
+                    this.startSilenceTimer();
+                }
             }
         });
 
         // Speech STT 事件
         this.speechService.on('stt-result', (data) => {
+            // TTS播放期間忽略STT結果
+            if (this.isSpeaking) {
+                return;
+            }
             if (data.transcript) {
                 if (data.isFinal) {
                     this.emit('log', `💬 最終識別: "${data.transcript}"`, 'success');
                     this.emit('final-transcript', data.transcript);
-                    this.processCommand(data.transcript);
+
+                    // 不立即處理，而是暫存並等待靜音確認
+                    this.pendingTranscript = data.transcript;
+                    this.collectingTranscript = false;
+                    this.emit('log', '⏳ 等待靜音確認...', 'info');
+
+                    // 如果還沒有靜音計時器，啟動一個
+                    if (!this.timerService.getTimerState('silenceTimer')) {
+                        this.startSilenceTimer();
+                    }
                 } else {
                     this.emit('interim-transcript', data.transcript);
+                    this.collectingTranscript = true;
                 }
             }
         });
@@ -304,10 +375,19 @@ class AssistantCore extends EventTarget {
         // TTS 事件
         this.speechService.on('tts-start', () => {
             this.emit('log', '🔊 開始播放語音', 'info');
+            this.isSpeaking = true;
         });
 
         this.speechService.on('tts-end', () => {
             this.emit('log', '🔇 語音播放完成', 'info');
+            this.isSpeaking = false;
+
+            // 如果有等待中的Promise，立即resolve
+            if (this.ttsPlaybackResolve) {
+                const resolveFn = this.ttsPlaybackResolve;
+                this.ttsPlaybackResolve = null;
+                resolveFn();
+            }
         });
 
         this.speechService.on('error', (data) => {
@@ -331,8 +411,17 @@ class AssistantCore extends EventTarget {
 
         this.timerService.on('timeout', (data) => {
             if (data.id === 'silenceTimer') {
-                this.emit('log', '⏰ 靜音超時，返回閒置狀態', 'warning');
-                this.sleep();
+                // 靜音計時器超時 - 檢查是否有待處理的指令
+                if (this.pendingTranscript && this.state === 'listening' && this.isAwake) {
+                    const transcript = this.pendingTranscript;
+                    this.pendingTranscript = null;
+                    this.emit('log', `✅ 靜音 1.8 秒確認，處理指令: "${transcript}"`, 'success');
+                    this.processCommand(transcript);
+                } else if (this.state === 'listening' && this.isAwake) {
+                    // 沒有待處理指令，靜音超時，返回閒置
+                    this.emit('log', '⏰ 靜音超時且無識別內容，返回閒置狀態', 'warning');
+                    this.sleep();
+                }
             } else if (data.id === 'maxListeningTimer') {
                 this.emit('log', '⏰ 達到最大聆聽時間，返回閒置狀態', 'warning');
                 this.sleep();
@@ -376,11 +465,16 @@ class AssistantCore extends EventTarget {
             this.wakewordBuffer = this.wakewordBuffer || new Float32Array(1280);
             this.wakewordBufferIndex = this.wakewordBufferIndex || 0;
 
-            if (!this.wakewordState) {
-                this.wakewordState = this.wakewordService.createState();
+            // 根據當前模型創建狀態和參數
+            const currentModel = this.config.wakewordModel || 'hey-jarvis';
+
+            if (!this.wakewordState || this.lastWakewordModel !== currentModel) {
+                // 如果模型改變了，重新創建狀態
+                this.wakewordState = this.wakewordService.createState(currentModel);
+                this.lastWakewordModel = currentModel;
             }
-            if (!this.wakewordParams) {
-                this.wakewordParams = this.wakewordService.createParams('hey-jarvis');
+            if (!this.wakewordParams || this.lastWakewordModel !== currentModel) {
+                this.wakewordParams = this.wakewordService.createParams(currentModel);
             }
 
             const remainingSpace = this.wakewordBuffer.length - this.wakewordBufferIndex;
@@ -453,6 +547,12 @@ class AssistantCore extends EventTarget {
         this.state = 'idle';
         this.isAwake = false;
 
+        // 清除無活動計時器
+        if (this.inactivityTimer) {
+            clearTimeout(this.inactivityTimer);
+            this.inactivityTimer = null;
+        }
+
         this.emit('state-change', 'idle');
 
         // 停止 STT
@@ -476,6 +576,20 @@ class AssistantCore extends EventTarget {
             this.vadBufferIndex = 0;
         }
 
+        // 重置喚醒詞狀態 - 非常重要！防止緩存的音訊重複觸發
+        if (this.wakewordService) {
+            this.wakewordService.reset();  // 重置服務內部狀態
+            this.wakewordState = null;     // 清空狀態
+            this.wakewordParams = null;    // 清空參數
+            this.wakewordBuffer = null;    // 清空緩衝區
+            this.wakewordBufferIndex = 0;  // 重置索引
+            this.lastWakewordTime = null;  // 重置時間戳
+        }
+
+        // 清除 transcript 緩衝
+        this.pendingTranscript = null;
+        this.collectingTranscript = false;
+
         // 清除計時器
         if (this.timerService) {
             this.timerService.stop('silenceTimer');
@@ -483,7 +597,6 @@ class AssistantCore extends EventTarget {
         }
         this.emit('timer-update', { type: 'silence', current: 0, max: this.timers.silence.max });
         this.emit('timer-update', { type: 'maxListening', current: 0, max: this.timers.maxListening.max });
-        this.silenceTimerActive = false;
 
         // 開始音訊擷取以監聽喚醒詞
         if (this.audioCapture && this.wakewordService) {
@@ -550,8 +663,8 @@ class AssistantCore extends EventTarget {
             }
         }
 
-        // 設定最大聆聽時間計時器
-        if (this.timerService) {
+        // 設定最大聆聽時間計時器（如果不是永不停止的話）
+        if (this.timerService && this.config.maxListeningTime > 0) {
             this.timerService.createTimer('maxListeningTimer',
                 this.config.maxListeningTime,
                 100,
@@ -563,8 +676,8 @@ class AssistantCore extends EventTarget {
             this.timerService.start('maxListeningTimer');
         }
 
-        // 初始靜音計時
-        this.startSilenceTimer();
+        // 不再立即啟動靜音計時器，等待有語音活動後再啟動
+        // this.startSilenceTimer();
     }
 
     /**
@@ -580,34 +693,33 @@ class AssistantCore extends EventTarget {
      * 開始靜音計時器
      */
     startSilenceTimer() {
-        this.emit('log', '⏱️ 開始靜音計時', 'info');
-
-        if (!this.timerService) return;
-
-        if (this.silenceTimerActive) {
-            if (this.timerService.getTimerState('silenceTimer')) {
-                this.timerService.reset('silenceTimer', this.config.silenceTimeout);
-                this.timerService.start('silenceTimer');
-            }
+        // 只在聆聽狀態下啟動計時器
+        if (this.state !== 'listening' || !this.isAwake) {
             return;
         }
 
-        this.silenceTimerActive = true;
+        this.emit('log', '⏱️ 開始靜音計時 (1.8秒)', 'info');
 
-        if (this.timerService.getTimerState('silenceTimer')) {
-            this.timerService.reset('silenceTimer', this.config.silenceTimeout);
-        } else {
-            this.timerService.createTimer('silenceTimer',
-                this.config.silenceTimeout,
-                100,
-                () => {
-                    this.emit('log', '⏰ 靜音超時，返回閒置狀態', 'info');
-                    this.silenceTimerActive = false;
-                    this.sleep();
-                }
-            );
+        if (!this.timerService) return;
+
+        // 確保先清理舊的計時器 (stop 會自動刪除)
+        try {
+            if (this.timerService.getTimerState('silenceTimer')) {
+                this.timerService.stop('silenceTimer');
+            }
+        } catch (e) {
+            // 忽略錯誤
         }
 
+        // 創建新的計時器
+        // 注意：超時處理已經在 timerService.on('timeout') 事件中處理
+        this.timerService.createTimer('silenceTimer',
+            this.config.silenceTimeout,  // 1800 毫秒
+            100  // 每 100ms 更新一次
+            // 不需要回調，因為已經在 timeout 事件中處理
+        );
+
+        // 立即啟動計時器
         this.timerService.start('silenceTimer');
     }
 
@@ -615,44 +727,71 @@ class AssistantCore extends EventTarget {
      * 處理語音指令
      */
     async processCommand(command) {
-        this.emit('log', `🤖 處理指令: "${command}"`, 'info');
-        this.state = 'processing';
-        this.emit('state-change', 'processing');
+        try {
+            this.emit('log', `🤖 處理指令: "${command}"`, 'info');
+            this.state = 'processing';
+            this.emit('state-change', 'processing');
 
-        if (this.timerService && this.timerService.getTimerState('silenceTimer')) {
-            this.timerService.pause('silenceTimer');
-        }
+            // 暫停靜音計時器
+            if (this.timerService) {
+                this.timerService.stop('silenceTimer');
+            }
 
-        // 檢查停止指令
-        if (command.includes('停止') || command.includes('結束') || command.includes('休眠')) {
-            this.emit('log', '👋 收到停止指令', 'info');
-            await this.sleep();
-            return;
-        }
+            // 檢查停止指令
+            if (command.includes('停止') || command.includes('結束') || command.includes('休眠')) {
+                this.emit('log', '👋 收到停止指令', 'info');
+                await this.sleep();
+                return;
+            }
 
-        // 處理其他指令並等待語音播放完成
-        let response = '';
-        if (command.includes('時間')) {
-            response = this.getTimeResponse();
-        } else if (command.includes('天氣')) {
-            response = this.getWeatherResponse();
-        } else if (command.includes('音樂')) {
-            response = this.getMusicResponse();
-        } else if (command.includes('你好')) {
-            response = '你好！有什麼可以幫助你的嗎？';
-        } else {
-            response = '抱歉，我不太明白你的意思。';
-        }
+            // 處理其他指令
+            let response = '';
+            if (command.includes('時間')) {
+                response = this.getTimeResponse();
+            } else if (command.includes('天氣')) {
+                response = this.getWeatherResponse();
+            } else if (command.includes('音樂')) {
+                response = this.getMusicResponse();
+            } else if (command.includes('你好')) {
+                response = '你好！有什麼可以幫助你的嗎？';
+            } else {
+                response = '抱歉，我不太明白你的意思。請再說一次。';
+            }
 
-        // 播放回應並等待完成
-        await this.speakAndWait(response);
+            // 播放回應
+            await this.speakAndWait(response);
 
-        // TTS 播放完成後，恢復到聆聽狀態
-        if (this.isAwake) {
-            this.state = 'listening';
-            this.emit('state-change', 'listening');
-            this.emit('clear-interim-transcript');
-            this.startSilenceTimer();
+        } catch (error) {
+            this.emit('log', `❌ 處理指令錯誤: ${error.message}`, 'error');
+        } finally {
+            // 確保返回聆聽狀態（除非已經進入閒置）
+            if (this.state === 'processing') {
+                this.emit('log', '👂 返回聆聽狀態', 'info');
+                this.state = 'listening';
+                this.emit('play-sound', 'wake');  // 播放喚醒音效
+                this.emit('state-change', 'listening');
+                this.emit('clear-interim-transcript');
+
+                // 清除任何殘留的待處理transcript
+                this.pendingTranscript = null;
+                this.collectingTranscript = false;
+
+                // 清除舊的無活動計時器
+                if (this.inactivityTimer) {
+                    clearTimeout(this.inactivityTimer);
+                    this.inactivityTimer = null;
+                }
+
+                // 設置一個長時間無活動的超時（10秒）
+                // 如果10秒內沒有任何語音活動，返回閒置
+                this.inactivityTimer = setTimeout(() => {
+                    if (this.state === 'listening' && !this.pendingTranscript && !this.collectingTranscript) {
+                        this.emit('log', '⏰ 長時間無語音活動，返回閒置（10秒超時）', 'warning');
+                        this.sleep();
+                    }
+                    this.inactivityTimer = null;
+                }, 10000);
+            }
         }
     }
 
@@ -692,8 +831,9 @@ class AssistantCore extends EventTarget {
         if (this.speechService) {
             this.speechService.speak(text, {
                 lang: 'zh-TW',
-                rate: 1.8,
-                pitch: 0.2
+                voice: this.ttsSettings.voice || undefined,
+                rate: this.ttsSettings.rate || 1.8,
+                pitch: this.ttsSettings.pitch || 1.0
             });
         }
     }
@@ -703,33 +843,49 @@ class AssistantCore extends EventTarget {
      */
     async speakAndWait(text) {
         if (!this.speechService) {
+            this.emit('log', '⚠️ TTS 服務不可用', 'warning');
             return;
         }
 
-        return new Promise((resolve) => {
-            // 設定 TTS 完成的監聽器
-            const handleTTSEnd = () => {
-                this.speechService.off('tts-end', handleTTSEnd);
-                // 給一點額外的時間確保音頻完全播放完畢
-                setTimeout(resolve, 500);
-            };
+        // 建立一個Promise來追蹤TTS播放狀態
+        this.ttsPlaybackPromise = null;
+        this.ttsPlaybackResolve = null;
 
-            // 監聽 TTS 結束事件
-            this.speechService.on('tts-end', handleTTSEnd);
+        const promise = new Promise((resolve) => {
+            this.ttsPlaybackResolve = resolve;
 
-            // 開始播放 TTS
-            this.speechService.speak(text, {
-                lang: 'zh-TW',
-                rate: 1.8,
-                pitch: 0.2
-            });
+            // 開始播放
+            try {
+                this.speechService.speak(text, {
+                    lang: 'zh-TW',
+                    voice: this.ttsSettings.voice || undefined,
+                    rate: this.ttsSettings.rate || 1.8,
+                    pitch: this.ttsSettings.pitch || 1.0
+                });
 
-            // 設定超時保護，避免永遠等待
-            setTimeout(() => {
-                this.speechService.off('tts-end', handleTTSEnd);
+                // 根據文字長度估算播放時間
+                const estimatedTime = Math.min(text.length * 150 + 1000, 8000);
+                this.emit('log', `⏱️ 預計播放時間: ${estimatedTime}ms`, 'info');
+
+                // 設置超時保護
+                setTimeout(() => {
+                    if (this.ttsPlaybackResolve) {
+                        this.emit('log', '⚠️ TTS播放超時，使用估算時間', 'warning');
+                        this.isSpeaking = false;
+                        const resolveFn = this.ttsPlaybackResolve;
+                        this.ttsPlaybackResolve = null;
+                        resolveFn();
+                    }
+                }, estimatedTime + 2000); // 額外2秒緩衝
+            } catch (error) {
+                this.emit('log', `❌ TTS 錯誤: ${error.message}`, 'error');
+                this.isSpeaking = false;
                 resolve();
-            }, 10000); // 10 秒超時
+            }
         });
+
+        this.ttsPlaybackPromise = promise;
+        return promise;
     }
 
     /**
@@ -738,7 +894,7 @@ class AssistantCore extends EventTarget {
     updateConfig(config) {
         Object.assign(this.config, config);
         this.timers.silence.max = this.config.silenceTimeout / 1000;
-        this.timers.maxListening.max = this.config.maxListeningTime / 1000;
+        this.timers.maxListening.max = this.config.maxListeningTime > 0 ? this.config.maxListeningTime / 1000 : -1;
 
         // 更新服務配置
         if (config.vadThreshold && this.vadService) {
@@ -764,10 +920,27 @@ class AssistantCore extends EventTarget {
             const url = URL.createObjectURL(blob);
 
             if (this.wakewordService) {
-                await this.wakewordService.loadCustomModel('custom', url);
+                // 使用檔名作為註冊名稱，讓 WakewordService 可以偵測 KMU 模型
+                // 如果檔名包含 'kmu'，維度偵測會自動使用 28
+                const modelName = file.name.toLowerCase().includes('kmu') ?
+                    `custom_kmu_${Date.now()}` : 'custom';
+
+                // 使用正確的方法名稱 registerCustomModel
+                await this.wakewordService.registerCustomModel(modelName, url);
                 this.customModel = url;
-                this.config.wakewordModel = 'custom';
-                this.emit('log', '✅ 自訂模型載入成功', 'success');
+                this.customModelName = modelName; // 儲存實際的模型名稱
+                this.config.wakewordModel = modelName; // 使用實際的模型名稱
+
+                // 重置狀態以使用新模型
+                this.wakewordState = null;
+                this.wakewordParams = null;
+                this.lastWakewordModel = null;
+
+                this.emit('log', `✅ 自訂模型載入成功 (${modelName})`, 'success');
+
+                // 顯示模型資訊
+                const models = this.wakewordService.getLoadedModels();
+                this.emit('log', `已載入模型: ${models.join(', ')}`, 'info');
             }
         } catch (error) {
             this.emit('log', `❌ 載入自訂模型失敗: ${error.message}`, 'error');
@@ -820,6 +993,23 @@ class AssistantCore extends EventTarget {
         } else {
             this.dispatchEvent(new CustomEvent(type, { detail: data }));
         }
+    }
+
+    /**
+     * 更新 TTS 設定
+     */
+    updateTTSSettings(settings) {
+        if (settings.voice !== undefined) {
+            this.ttsSettings.voice = settings.voice;
+        }
+        if (settings.rate !== undefined) {
+            this.ttsSettings.rate = settings.rate;
+        }
+        if (settings.pitch !== undefined) {
+            this.ttsSettings.pitch = settings.pitch;
+        }
+
+        this.emit('log', `🔧 TTS 設定已更新: 語音=${this.ttsSettings.voice || '預設'}, 速度=${this.ttsSettings.rate}, 音調=${this.ttsSettings.pitch}`, 'info');
     }
 
     /**

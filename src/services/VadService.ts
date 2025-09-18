@@ -9,6 +9,7 @@ import { EventEmitter } from '../core/EventEmitter';
 import { AudioChunker } from '../utils/AudioChunker';
 import { AudioRingBuffer } from '../utils/AudioRingBuffer';
 import { ConfigManager } from '../utils/config-manager';
+import { VadEvents } from '../types/events';
 import type { InferenceSession } from 'onnxruntime-web';
 import type { VadState, VadParams, VadResult } from '../types';
 import {
@@ -18,45 +19,6 @@ import {
   processVad
 } from './vad';
 
-/**
- * VAD 服務事件定義
- */
-export interface VadEvents {
-  ready: { 
-    config: {
-      sampleRate: number;
-      windowSize: number;
-      threshold: number;
-    };
-    timestamp: number;
-  };
-  speechStart: { 
-    timestamp: number; 
-    score: number;
-  };
-  speechEnd: { 
-    timestamp: number; 
-    duration: number;
-  };
-  process: { 
-    result: {
-      detected: boolean; 
-      score: number;
-    };
-    timestamp: number;
-  };
-  statistics: {
-    chunksProcessed: number;
-    averageProcessingTime: number;
-    speechDuration: number;
-    silenceDuration: number;
-  };
-  error: { 
-    error: Error; 
-    context: string;
-    timestamp: number;
-  };
-}
 
 /**
  * VAD 服務特定選項
@@ -78,11 +40,11 @@ export interface VadServiceOptions {
  * const vad = new VadService({ threshold: 0.6 });
  * 
  * // 訂閱事件
- * vad.on('speechStart', ({ timestamp, score }) => {
+ * vad.on(VadEvents.SPEECH_START, ({ timestamp, score }) => {
  *   console.log('Speech started:', timestamp, score);
  * });
  * 
- * vad.on('speechEnd', ({ duration }) => {
+ * vad.on(VadEvents.SPEECH_END, ({ duration }) => {
  *   console.log('Speech duration:', duration);
  * });
  * 
@@ -97,7 +59,7 @@ export interface VadServiceOptions {
  * state = result.state;
  * ```
  */
-export class VadService extends EventEmitter<VadEvents> {
+export class VadService extends EventEmitter<any> {
   private session: InferenceSession | null = null;
   private chunker: AudioChunker | null = null;
   private lastSpeechStart: number | null = null;
@@ -132,7 +94,7 @@ export class VadService extends EventEmitter<VadEvents> {
       this.chunker = AudioChunker.forVAD();
       
       // 發射 ready 事件
-      this.emit('ready', {
+      this.emit(VadEvents.READY, {
         config: {
           sampleRate: this.config.audio.sampleRate,
           windowSize: this.options.windowSize ?? this.config.vad.windowSize,
@@ -141,7 +103,7 @@ export class VadService extends EventEmitter<VadEvents> {
         timestamp: Date.now()
       });
     } catch (error) {
-      this.emit('error', { 
+      this.emit(VadEvents.ERROR, { 
         error: error as Error, 
         context: 'initialize',
         timestamp: Date.now()
@@ -177,7 +139,7 @@ export class VadService extends EventEmitter<VadEvents> {
       this.updateStatistics(processingTime, result.detected);
       
       // 發射處理事件
-      this.emit('process', { 
+      this.emit(VadEvents.PROCESS, { 
         result: {
           detected: result.detected, 
           score: result.score
@@ -189,7 +151,7 @@ export class VadService extends EventEmitter<VadEvents> {
       if (!state.isSpeechActive && result.state.isSpeechActive) {
         // 語音開始
         this.lastSpeechStart = Date.now();
-        this.emit('speechStart', { 
+        this.emit(VadEvents.SPEECH_START, { 
           timestamp: this.lastSpeechStart, 
           score: result.score 
         });
@@ -197,7 +159,7 @@ export class VadService extends EventEmitter<VadEvents> {
         // 語音結束
         const now = Date.now();
         const duration = this.lastSpeechStart ? now - this.lastSpeechStart : 0;
-        this.emit('speechEnd', { 
+        this.emit(VadEvents.SPEECH_END, { 
           timestamp: now, 
           duration 
         });
@@ -206,9 +168,9 @@ export class VadService extends EventEmitter<VadEvents> {
       
       return result;
     } catch (error) {
-      this.emit('error', { 
+      this.emit(VadEvents.ERROR, { 
         error: error as Error, 
-        context: 'process',
+        context: VadEvents.PROCESS,
         timestamp: Date.now()
       });
       throw error;
@@ -302,7 +264,7 @@ export class VadService extends EventEmitter<VadEvents> {
     // 每秒發射一次統計事件
     const now = Date.now();
     if (now - this.stats.lastStatsEmit > 1000) {
-      this.emit('statistics', {
+      this.emit(VadEvents.STATISTICS, {
         chunksProcessed: this.stats.chunksProcessed,
         averageProcessingTime: this.stats.totalProcessingTime / this.stats.chunksProcessed,
         speechDuration: this.stats.speechDuration,

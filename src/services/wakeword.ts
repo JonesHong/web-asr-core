@@ -126,8 +126,8 @@ export async function loadWakewordResources(
   };
   
   // 嘗試從模型資源自動偵測維度（如果可能）
-  const dims = detectWakewordDims(resources, cfg);
-  
+  const dims = await detectWakewordDims(resources, cfg);
+
   // 更新為檢測到的實際維度（或保留配置的預設值）
   resources.dims = dims;
   
@@ -136,43 +136,254 @@ export async function loadWakewordResources(
 
 /**
  * 從檢測器模型輸入形狀檢測喚醒詞模型維度
- * 
- * @description 分析檢測器模型的輸入形狀以確定嵌入緩衝區大小和維度
+ *
+ * @description 動態偵測模型維度（無硬編碼），使用多層 fallback 策略
+ * 優先順序：
+ * 1) detector.inputMetadata（若維度是固定數字直接取用）
+ * 2) embedding.outputMetadata（補齊 embeddingDimension）
+ * 3) 以常見 buf 候選值做試跑（16/20/24/28/32...）
+ * 4) 解析錯誤訊息中的 shape（若 ORT 提示期望形狀）
+ * 5) 終極 fallback：使用設定預設值
+ *
  * @param resources - 喚醒詞模型資源
  * @param config - 可選的配置管理器實例
- * @returns 模型維度配置
+ * @returns Promise<模型維度配置>
  * @returns.embeddingBufferSize - 嵌入緩衝區大小（時間步數）
  * @returns.embeddingDimension - 嵌入向量維度
- * 
+ *
  * @example
  * ```typescript
- * const dims = detectWakewordDims(resources);
+ * const dims = await detectWakewordDims(resources);
  * console.log(`緩衝區大小: ${dims.embeddingBufferSize}, 維度: ${dims.embeddingDimension}`);
  * ```
  */
-export function detectWakewordDims(
+export async function detectWakewordDims(
   resources: WakewordResources,
   config?: ConfigManager
-): { embeddingBufferSize: number; embeddingDimension: number } {
+): Promise<{ embeddingBufferSize: number; embeddingDimension: number }> {
   const cfg = config || new ConfigManager();
-  
-  // 獲取輸入元數據
-  const inputNames = resources.detector.inputNames;
-  
-  // 使用配置的預設維度，實際生產環境可能需要更仔細的模型檢查
-  let embeddingBufferSize = cfg.wakeword.common.embeddingBufferSize;
-  let embeddingDimension = cfg.wakeword.common.embeddingDimension;
-  
+
+  // 預設（最後一層 fallback）
+  let embeddingBufferSize: number | undefined = cfg.wakeword.common.embeddingBufferSize;
+  let embeddingDimension: number | undefined = cfg.wakeword.common.embeddingDimension;
+
+  // 常見時間步長候選值
+  const timeStepCandidates = [16, 20, 24, 28, 32];
+
+  // 輔助函數：檢查值是否為有效數字
+  type DimVal = number | string | undefined | null;
+  const isNumeric = (v: DimVal): v is number =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0;
+
+  // 輔助函數：轉換為陣列
+  const toArray = <T,>(v: T | T[] | undefined): T[] | undefined =>
+    Array.isArray(v) ? v : v !== undefined ? [v] : undefined;
+
+  // 提取 ONNX Runtime metadata 的維度資訊
+  const getIODims = (session: any, io: 'input' | 'output', name: string): DimVal[] | undefined => {
+    const md = io === 'input' ? session.inputMetadata : session.outputMetadata;
+    if (!md) return undefined;
+
+    // 處理不同的 metadata 結構（物件或 Map）
+    const entry =
+      (typeof md.get === 'function' ? md.get(name) : undefined) ??
+      (md[name] ?? undefined);
+    if (!entry) return undefined;
+
+    // 嘗試常見的欄位名稱
+    const dims = entry.dimensions ?? entry.shape ?? entry.dims;
+    if (Array.isArray(dims)) return dims as DimVal[];
+
+    // 某些 ORT 版本有 TypeInfo 結構
+    const typeInfo = entry.type ?? entry.tensorTypeAndShapeInfo ?? entry.tensorTypeAndShape ??
+      entry.valueType ?? entry.typeInfo;
+    const shape =
+      typeInfo?.shape ??
+      typeInfo?.dimensions ??
+      typeInfo?.tensorShape ??
+      undefined;
+    if (Array.isArray(shape)) return shape as DimVal[];
+
+    return undefined;
+  };
+
+  // 選擇最可能的檢測器輸入（rank-3: [1, T, D]）
+  const pickDetectorInput = (session: any): { name: string; dims?: DimVal[] } => {
+    const names: string[] = toArray(session.inputNames) || [];
+    let best: { name: string; dims?: DimVal[] } | undefined;
+
+    for (const n of names) {
+      const dims = getIODims(session, 'input', n);
+      if (dims && dims.length === 3) {
+        // 優先選擇 rank-3 張量
+        return { name: n, dims };
+      }
+      // 記住第一個輸入作為備選
+      if (!best) best = { name: n, dims };
+    }
+    return best || { name: names[0] };
+  };
+
+  // 從錯誤訊息中解析形狀
+  const parseShapesFromError = (msg: string): number[][] => {
+    const shapes: number[][] = [];
+
+    // 捕獲像 [1, 28, 96] 或 (1,28,96) 或 1x28x96 的序列
+    // 1) 括號列表
+    const bracketRegex = /[\[\(]\s*([0-9\s,;xX×]+)\s*[\]\)]/g;
+    let m: RegExpExecArray | null;
+    while ((m = bracketRegex.exec(msg)) !== null) {
+      const body = m[1] || '';
+      const parts = body
+        .split(/[,;xX×\s]+/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(n => parseInt(n, 10))
+        .filter(n => Number.isFinite(n) && n > 0);
+      if (parts.length >= 2) {
+        shapes.push(parts);
+      }
+    }
+
+    // 2) 無括號的 1x28x96 格式
+    const bareRegex = /(\d+\s*[xX×]\s*\d+(?:\s*[xX×]\s*\d+)+)/g;
+    while ((m = bareRegex.exec(msg)) !== null) {
+      const body = m[1] || '';
+      const parts = body
+        .split(/[xX×]/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(n => parseInt(n, 10))
+        .filter(n => Number.isFinite(n) && n > 0);
+      if (parts.length >= 2) {
+        shapes.push(parts);
+      }
+    }
+
+    // 優先選擇 3D 形狀
+    const rank3 = shapes.filter(s => s.length === 3);
+    return rank3.length ? rank3 : shapes;
+  };
+
+  const chooseExpectedDetectorShape = (msg: string): { time?: number; dim?: number } => {
+    const shapes = parseShapesFromError(msg);
+
+    // 啟發式：優先選擇 [1, T, D] 格式
+    for (const s of shapes) {
+      if (s.length === 3 && s[0] === 1) {
+        return { time: s[1], dim: s[2] };
+      }
+    }
+
+    // 備選：任何 3D 形狀
+    for (const s of shapes) {
+      if (s.length === 3) return { time: s[1], dim: s[2] };
+    }
+
+    return {};
+  };
+
+  // 步驟 1：從 embedding 輸出 metadata 獲取 embeddingDimension
   try {
-    // 嘗試從會話獲取輸入形狀
-    // 注意：這可能無法適用於所有 ONNX 模型
-    const inputName = inputNames[0];
-    // 目前使用預設值，因為元數據檢查較為複雜
-    // 實際模型使用：[1, 16, 96] 或 [1, 28, 96] 作為檢測器輸入
-  } catch (error) {
-    console.warn('無法檢測維度，使用預設值:', error);
+    const embOutName = resources.embedding.outputNames?.[0];
+    if (embOutName) {
+      const embOutDims = getIODims(resources.embedding as any, 'output', embOutName);
+      // 使用最後一個數字維度作為 embedding dimension
+      if (embOutDims && embOutDims.length >= 1) {
+        const numericDims = embOutDims.filter(isNumeric) as number[];
+        if (numericDims.length >= 1) {
+          const cand = numericDims[numericDims.length - 1];
+          if (isNumeric(cand)) {
+            embeddingDimension = cand;
+            console.log(`[detectWakewordDims] 從 embedding 輸出偵測到維度: ${embeddingDimension}`);
+          }
+        }
+      }
+    }
+  } catch {
+    // 忽略錯誤，繼續下一步
   }
-  
+
+  // 步驟 2：從 detector 輸入 metadata 獲取維度
+  let detInputName = resources.detector.inputNames?.[0] as string | undefined;
+  let detInputDims: DimVal[] | undefined;
+  try {
+    const picked = pickDetectorInput(resources.detector as any);
+    detInputName = picked?.name ?? detInputName;
+    detInputDims = picked?.dims;
+    if (detInputDims && detInputDims.length === 3) {
+      const [, t, d] = detInputDims;
+      if (isNumeric(t)) {
+        embeddingBufferSize = t;
+        console.log(`[detectWakewordDims] 從 detector 輸入偵測到 bufferSize: ${embeddingBufferSize}`);
+      }
+      if (isNumeric(d)) {
+        embeddingDimension = d;
+        console.log(`[detectWakewordDims] 從 detector 輸入偵測到 dimension: ${embeddingDimension}`);
+      }
+    }
+  } catch {
+    // 忽略錯誤，繼續下一步
+  }
+
+  // 步驟 3：如果時間步長未知，使用常見候選值進行試跑
+  const needTimeProbe = !Number.isFinite(embeddingBufferSize) || embeddingBufferSize <= 0 ||
+    detInputDims === undefined ||
+    (Array.isArray(detInputDims) && detInputDims.length === 3 && !isNumeric(detInputDims[1]));
+
+  if (needTimeProbe && detInputName && embeddingDimension) {
+    console.log('[detectWakewordDims] 開始探測時間步長...');
+
+    for (const t of timeStepCandidates) {
+      try {
+        const testTensor = createTensor(
+          'float32',
+          new Float32Array(t * embeddingDimension),
+          [1, t, embeddingDimension]
+        );
+
+        // 嘗試執行檢測器
+        await resources.detector.run({
+          [detInputName]: testTensor
+        });
+
+        // 如果執行成功，接受這個時間步長
+        embeddingBufferSize = t;
+        console.log(`[detectWakewordDims] 探測成功，時間步長為: ${t}`);
+        break;
+      } catch (e: any) {
+        // 從錯誤訊息中解析期望的形狀
+        const msg = (e && (e.message || e.toString())) || '';
+        const expected = chooseExpectedDetectorShape(msg);
+
+        if (expected.time && Number.isFinite(expected.time)) {
+          embeddingBufferSize = expected.time;
+          console.log(`[detectWakewordDims] 從錯誤訊息解析出時間步長: ${expected.time}`);
+        }
+        if (expected.dim && Number.isFinite(expected.dim)) {
+          embeddingDimension = expected.dim;
+          console.log(`[detectWakewordDims] 從錯誤訊息解析出維度: ${expected.dim}`);
+        }
+
+        // 如果從錯誤中獲得了兩個維度，停止探測
+        if (expected.time && expected.dim) break;
+      }
+    }
+  }
+
+  // 最終 fallback：確保有有效的正數值
+  if (!Number.isFinite(embeddingBufferSize) || embeddingBufferSize <= 0) {
+    console.log(`[detectWakewordDims] 使用預設 bufferSize: ${cfg.wakeword.common.embeddingBufferSize}`);
+    embeddingBufferSize = cfg.wakeword.common.embeddingBufferSize;
+  }
+
+  if (!Number.isFinite(embeddingDimension) || embeddingDimension <= 0) {
+    console.log(`[detectWakewordDims] 使用預設 dimension: ${cfg.wakeword.common.embeddingDimension}`);
+    embeddingDimension = cfg.wakeword.common.embeddingDimension;
+  }
+
+  console.log(`[detectWakewordDims] 最終維度 - bufferSize: ${embeddingBufferSize}, dimension: ${embeddingDimension}`);
+
   return { embeddingBufferSize, embeddingDimension };
 }
 

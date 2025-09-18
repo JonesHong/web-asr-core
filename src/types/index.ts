@@ -12,3 +12,4 @@ export * from './models';     // 模型註冊表類型
 export * from './vad';        // VAD 類型
 export * from './wakeword';   // 喚醒詞類型
 export * from './whisper';    // Whisper 類型
+export * from './events';     // 事件枚舉類型

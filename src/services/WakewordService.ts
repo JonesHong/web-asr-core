@@ -9,13 +9,15 @@ import { EventEmitter } from '../core/EventEmitter';
 import { AudioChunker } from '../utils/AudioChunker';
 import { AudioRingBuffer } from '../utils/AudioRingBuffer';
 import { ConfigManager } from '../utils/config-manager';
+import { WakewordEvents } from '../types/events';
 import * as ortService from '../runtime/ort';
 import type { WakewordResources, WakewordState, WakewordParams, WakewordResult } from '../types';
 import {
   loadWakewordResources,
   createWakewordState,
   createDefaultWakewordParams,
-  processWakewordChunk
+  processWakewordChunk,
+  detectWakewordDims
 } from './wakeword';
 
 /**
@@ -28,41 +30,6 @@ export interface WakewordServiceOptions {
   resetOnDetection?: boolean;
 }
 
-/**
- * Wake Word 服務事件定義
- */
-export interface WakewordEvents {
-  ready: { 
-    models: string[];
-    config: {
-      sampleRate: number;
-      chunkSize: number;
-    };
-    timestamp: number;
-  };
-  wakewordDetected: { 
-    word: string;
-    score: number;
-    timestamp: number;
-  };
-  process: { 
-    word: string;
-    scores: number[];
-    maxScore: number;
-    timestamp: number;
-  };
-  statistics: {
-    chunksProcessed: Map<string, number>;
-    averageProcessingTime: Map<string, number>;
-    detectionCounts: Map<string, number>;
-  };
-  error: { 
-    error: Error;
-    context: string;
-    wakeword?: string;
-    timestamp: number;
-  };
-}
 
 /**
  * WakewordService - 事件驅動的喚醒詞檢測服務
@@ -76,7 +43,7 @@ export interface WakewordEvents {
  * });
  * 
  * // 訂閱事件
- * wakeword.on('wakewordDetected', ({ word, score }) => {
+ * wakeword.on(WakewordEvents.WAKEWORD_DETECTED, ({ word, score }) => {
  *   console.log(`Wake word detected: ${word} (score: ${score})`);
  * });
  * 
@@ -91,7 +58,7 @@ export interface WakewordEvents {
  * state = result.state;
  * ```
  */
-export class WakewordService extends EventEmitter<WakewordEvents> {
+export class WakewordService extends EventEmitter<any> {
   private sessions: Map<string, WakewordResources> = new Map();
   private chunkers: Map<string, AudioChunker> = new Map();
   private config = ConfigManager.getInstance();
@@ -144,7 +111,7 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
       await Promise.all(loadPromises);
       
       // 發射 ready 事件
-      this.emit('ready', {
+      this.emit(WakewordEvents.READY, {
         models: Array.from(this.sessions.keys()),
         config: {
           sampleRate: this.config.audio.sampleRate,
@@ -153,7 +120,7 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
         timestamp: Date.now()
       });
     } catch (error) {
-      this.emit('error', { 
+      this.emit(WakewordEvents.ERROR, { 
         error: error as Error,
         context: 'initialize',
         timestamp: Date.now()
@@ -194,7 +161,7 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
       this.updateStatistics(params.wakeword, processingTime, result.triggered);
       
       // 發射處理事件
-      this.emit('process', {
+      this.emit(WakewordEvents.PROCESS, {
         word: params.wakeword,
         scores: [result.score], // Wrap single score in array
         maxScore: result.score,
@@ -212,7 +179,7 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
           this.cooldownTimers.set(params.wakeword, now);
 
           // 發射事件
-          this.emit('wakewordDetected', {
+          this.emit(WakewordEvents.WAKEWORD_DETECTED, {
             word: params.wakeword,
             score: result.score,
             timestamp: now
@@ -225,9 +192,9 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
       
       return result;
     } catch (error) {
-      this.emit('error', {
+      this.emit(WakewordEvents.ERROR, {
         error: error as Error,
-        context: 'process',
+        context: WakewordEvents.PROCESS,
         wakeword: params.wakeword,
         timestamp: Date.now()
       });
@@ -395,40 +362,40 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
     try {
       // 儲存自訂模型 URL
       this.customModels.set(name, modelUrl);
-      
-      // 載入自訂模型資源 - 只覆蓋 detector，保留標準 melspec/embedding
-      // 使用 hey_jarvis 作為基準來取得預設的 melspec/embedding 路徑
-      const cfg = this.config;
-      
-      // 首先載入自訂 detector 來偵測其輸入維度
+
+      // 1) 先載入自訂 detector（單獨）
       const detectorSession = await ortService.createSession(modelUrl);
-      
-      // 根據模型名稱推測需要的 embedding buffer size
-      // hi_kmu 系列模型需要 28 個時間步長，而不是預設的 16
-      let embeddingBufferSize = cfg.wakeword.common.embeddingBufferSize;
-      if (name.includes('kmu') || name.includes('28')) {
-        embeddingBufferSize = 28;
-        console.log(`[WakewordService] Detected KMU model, using embeddingBufferSize: ${embeddingBufferSize}`);
-      }
-      
-      // 載入標準的 melspec 和 embedding 模型
+
+      // 2) 取得「標準的」melspec/embedding（使用 hey_jarvis 作為基準）
+      const cfg = this.config;
       const melspecSession = await ortService.createSession(
         cfg.wakeword.hey_jarvis.melspecPath
       );
       const embeddingSession = await ortService.createSession(
         cfg.wakeword.hey_jarvis.embeddingPath
       );
-      
-      const resources: WakewordResources = {
+
+      // 3) 用 metadata + 試跑 自動偵測維度
+      const dims = await detectWakewordDims({
         detector: detectorSession,
         melspec: melspecSession,
         embedding: embeddingSession,
         dims: {
-          embeddingDimension: cfg.wakeword.common.embeddingDimension,
-          embeddingBufferSize: embeddingBufferSize  // 使用動態偵測的大小
+          embeddingBufferSize: cfg.wakeword.common.embeddingBufferSize,
+          embeddingDimension: cfg.wakeword.common.embeddingDimension
         }
+      }, this.config);
+
+      console.log(`[WakewordService] Detected dims for '${name}':`, dims);
+
+      // 4) 將自訂組合封成資源並註冊
+      const resources: WakewordResources = {
+        detector: detectorSession,
+        melspec: melspecSession,
+        embedding: embeddingSession,
+        dims
       };
-      
+
       this.sessions.set(name, resources);
       
       // 為自訂模型創建專用的 chunker
@@ -441,7 +408,7 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
       this.stats.detectionCounts.set(name, 0);
       
       // 發射 ready 事件更新
-      this.emit('ready', {
+      this.emit(WakewordEvents.READY, {
         models: Array.from(this.sessions.keys()),
         config: {
           sampleRate: this.config.audio.sampleRate,
@@ -452,7 +419,7 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
       
       console.log(`[WakewordService] Custom model registered: ${name}`);
     } catch (error) {
-      this.emit('error', { 
+      this.emit(WakewordEvents.ERROR, { 
         error: error as Error,
         context: 'registerCustomModel',
         wakeword: name,
@@ -535,7 +502,7 @@ export class WakewordService extends EventEmitter<WakewordEvents> {
         avgProcessingTime.set(word, totalTime / chunks);
       });
       
-      this.emit('statistics', {
+      this.emit(WakewordEvents.STATISTICS, {
         chunksProcessed: new Map(this.stats.chunksProcessed),
         averageProcessingTime: avgProcessingTime,
         detectionCounts: new Map(this.stats.detectionCounts)

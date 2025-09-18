@@ -7,58 +7,8 @@
 
 import { EventEmitter } from '../core/EventEmitter';
 import { Timer, type TimerState } from './timer';
+import { TimerEvents } from '../types/events';
 
-/**
- * Timer 服務事件定義
- */
-export interface TimerEvents {
-  ready: {
-    timestamp: number;
-  };
-  start: {
-    id: string;
-    duration: number;
-    timestamp: number;
-  };
-  tick: {
-    id: string;
-    remaining: number;
-    progress: number;
-    elapsed: number;
-    timestamp: number;
-  };
-  timeout: {
-    id: string;
-    duration: number;
-    timestamp: number;
-  };
-  pause: {
-    id: string;
-    remaining: number;
-    timestamp: number;
-  };
-  resume: {
-    id: string;
-    remaining: number;
-    timestamp: number;
-  };
-  reset: {
-    id: string;
-    duration: number;
-    timestamp: number;
-  };
-  stop: {
-    id: string;
-    elapsed: number;
-    timestamp: number;
-  };
-  error: {
-    error: Error;
-    context: string;
-    timerId?: string;
-    timestamp: number;
-  };
-}
 
 /**
  * 計時器配置
@@ -78,11 +28,11 @@ interface TimerConfig {
  * const timerService = new TimerService();
  * 
  * // 訂閱事件
- * timerService.on('timeout', ({ id, duration }) => {
+ * timerService.on(TimerEvents.TIMEOUT, ({ id, duration }) => {
  *   console.log(`Timer ${id} timeout after ${duration}ms`);
  * });
  * 
- * timerService.on('tick', ({ id, remaining, progress }) => {
+ * timerService.on(TimerEvents.TICK, ({ id, remaining, progress }) => {
  *   console.log(`Timer ${id}: ${remaining}ms remaining (${progress}%)`);
  * });
  * 
@@ -98,14 +48,14 @@ interface TimerConfig {
  * timerService.reset('speech-timeout', 10000);
  * ```
  */
-export class TimerService extends EventEmitter<TimerEvents> {
+export class TimerService extends EventEmitter<any> {
   private timers: Map<string, TimerConfig> = new Map();
   
   constructor() {
     super();
     // 發射 ready 事件
     setTimeout(() => {
-      this.emit('ready', { timestamp: Date.now() });
+      this.emit(TimerEvents.READY, { timestamp: Date.now() });
     }, 0);
   }
   
@@ -137,7 +87,7 @@ export class TimerService extends EventEmitter<TimerEvents> {
         onTimeout
       });
     } catch (error) {
-      this.emit('error', {
+      this.emit(TimerEvents.ERROR, {
         error: error as Error,
         context: 'createTimer',
         timerId: id,
@@ -162,7 +112,7 @@ export class TimerService extends EventEmitter<TimerEvents> {
       timer.state = Timer.start(timer.state);
       
       // 發射 start 事件
-      this.emit('start', {
+      this.emit(TimerEvents.START, {
         id,
         duration: timer.state.totalTime,
         timestamp: Date.now()
@@ -179,9 +129,9 @@ export class TimerService extends EventEmitter<TimerEvents> {
       }, timer.tickInterval) as unknown as number;
       
     } catch (error) {
-      this.emit('error', {
+      this.emit(TimerEvents.ERROR, {
         error: error as Error,
-        context: 'start',
+        context: TimerEvents.START,
         timerId: id,
         timestamp: Date.now()
       });
@@ -210,7 +160,7 @@ export class TimerService extends EventEmitter<TimerEvents> {
       const elapsed = timer.state.totalTime - remaining;
       
       // 發射 tick 事件
-      this.emit('tick', {
+      this.emit(TimerEvents.TICK, {
         id,
         remaining,
         progress,
@@ -220,7 +170,7 @@ export class TimerService extends EventEmitter<TimerEvents> {
       
       // 檢查是否超時
       if (result.timeout) {
-        this.emit('timeout', {
+        this.emit(TimerEvents.TIMEOUT, {
           id,
           duration: timer.state.totalTime,
           timestamp: Date.now()
@@ -233,9 +183,9 @@ export class TimerService extends EventEmitter<TimerEvents> {
         this.stop(id);
       }
     } catch (error) {
-      this.emit('error', {
+      this.emit(TimerEvents.ERROR, {
         error: error as Error,
-        context: 'tick',
+        context: TimerEvents.TICK,
         timerId: id,
         timestamp: Date.now()
       });
@@ -263,15 +213,15 @@ export class TimerService extends EventEmitter<TimerEvents> {
       }
       
       // 發射 pause 事件
-      this.emit('pause', {
+      this.emit(TimerEvents.PAUSE, {
         id,
         remaining: Timer.getRemainingTime(timer.state),
         timestamp: Date.now()
       });
     } catch (error) {
-      this.emit('error', {
+      this.emit(TimerEvents.ERROR, {
         error: error as Error,
-        context: 'pause',
+        context: TimerEvents.PAUSE,
         timerId: id,
         timestamp: Date.now()
       });
@@ -290,7 +240,7 @@ export class TimerService extends EventEmitter<TimerEvents> {
     
     try {
       // 發射 resume 事件
-      this.emit('resume', {
+      this.emit(TimerEvents.RESUME, {
         id,
         remaining: Timer.getRemainingTime(timer.state),
         timestamp: Date.now()
@@ -299,9 +249,9 @@ export class TimerService extends EventEmitter<TimerEvents> {
       // 重新啟動計時器
       this.start(id);
     } catch (error) {
-      this.emit('error', {
+      this.emit(TimerEvents.ERROR, {
         error: error as Error,
-        context: 'resume',
+        context: TimerEvents.RESUME,
         timerId: id,
         timestamp: Date.now()
       });
@@ -330,15 +280,15 @@ export class TimerService extends EventEmitter<TimerEvents> {
       timer.state = Timer.reset(timer.state, duration);
       
       // 發射 reset 事件
-      this.emit('reset', {
+      this.emit(TimerEvents.RESET, {
         id,
         duration: timer.state.totalTime,
         timestamp: Date.now()
       });
     } catch (error) {
-      this.emit('error', {
+      this.emit(TimerEvents.ERROR, {
         error: error as Error,
-        context: 'reset',
+        context: TimerEvents.RESET,
         timerId: id,
         timestamp: Date.now()
       });
@@ -363,7 +313,7 @@ export class TimerService extends EventEmitter<TimerEvents> {
       
       // 發射 stop 事件
       const elapsed = timer.state.totalTime - Timer.getRemainingTime(timer.state);
-      this.emit('stop', {
+      this.emit(TimerEvents.STOP, {
         id,
         elapsed,
         timestamp: Date.now()
@@ -372,9 +322,9 @@ export class TimerService extends EventEmitter<TimerEvents> {
       // 移除計時器
       this.timers.delete(id);
     } catch (error) {
-      this.emit('error', {
+      this.emit(TimerEvents.ERROR, {
         error: error as Error,
-        context: 'stop',
+        context: TimerEvents.STOP,
         timerId: id,
         timestamp: Date.now()
       });

@@ -64,7 +64,8 @@ import * as transformersMod from '@huggingface/transformers';
 import * as ortMod from 'onnxruntime-web';
 
 // 重新匯出主要 API
-export * from './index.ts';
+export * from './index.js';
+import * as WebASRCoreAPI from './index.js';
 
 // ===== 自動設定 WASM 路徑（在 bundle 載入時立即執行）=====
 (() => {
@@ -172,11 +173,14 @@ const ort = (g.WebASRCore && g.WebASRCore.ort) || g.ort || ortMod;
 g.WebASRCore = g.WebASRCore || {};
 g.WebASRCore.transformers = transformers;
 g.WebASRCore.ort = ort;
+// 將所有 API 合併到 WebASRCore
+Object.assign(g.WebASRCore, WebASRCoreAPI);
 g.transformers = transformers;
 g.ort = ort;
 
-// 重新匯出單一實例
+// 重新匯出單一實例和所有 API
 export { transformers, ort };
+export * from './index.js';
 `;
 
   // 寫入臨時入口檔案

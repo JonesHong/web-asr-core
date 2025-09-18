@@ -9,6 +9,7 @@
 
 import { EventEmitter } from '../core/EventEmitter';
 import { ConfigManager } from '../utils/config-manager';
+import { SpeechEvents } from '../types/events';
 import {
     loadTTSResources,
     createTTSState,
@@ -35,95 +36,6 @@ import type {
     STTParams
 } from './speech';
 
-/**
- * Speech 服務事件定義
- */
-export interface SpeechEvents {
-    // 系統事件
-    ready: {
-        ttsSupported: boolean;
-        sttSupported: boolean;
-        voices: Array<{ name: string; lang: string }>;
-        timestamp: number;
-    };
-    error: {
-        type: 'tts' | 'stt';
-        error: Error | string;
-        context: string;
-        timestamp: number;
-    };
-    
-    // TTS 事件
-    'tts-start': {
-        text: string;
-        voice: string | null;
-        rate: number;
-        pitch: number;
-        volume: number;
-        timestamp: number;
-    };
-    'tts-end': {
-        text: string;
-        duration: number;
-        timestamp: number;
-    };
-    'tts-pause': {
-        text: string;
-        position: number;
-        timestamp: number;
-    };
-    'tts-resume': {
-        text: string;
-        position: number;
-        timestamp: number;
-    };
-    'tts-boundary': {
-        text: string;
-        charIndex: number;
-        charLength: number;
-        word: string;
-        timestamp: number;
-    };
-    'tts-mark': {
-        text: string;
-        mark: string;
-        timestamp: number;
-    };
-    
-    // STT 事件
-    'stt-start': {
-        language: string;
-        continuous: boolean;
-        timestamp: number;
-    };
-    'stt-result': {
-        transcript: string;
-        isFinal: boolean;
-        confidence: number;
-        alternatives?: Array<{ transcript: string; confidence: number }>;
-        timestamp: number;
-    };
-    'stt-end': {
-        finalTranscript: string;
-        duration: number;
-        timestamp: number;
-    };
-    'stt-nomatch': {
-        timestamp: number;
-    };
-    'stt-speechstart': {
-        timestamp: number;
-    };
-    'stt-speechend': {
-        timestamp: number;
-    };
-    'stt-audiostart': {
-        timestamp: number;
-    };
-    'stt-audioend': {
-        timestamp: number;
-    };
-}
 
 /**
  * SpeechService - Web Speech API 事件驅動服務
@@ -133,11 +45,11 @@ export interface SpeechEvents {
  * const speechService = new SpeechService();
  * 
  * // TTS 使用範例
- * speechService.on('tts-start', ({ text }) => {
+ * speechService.on(SpeechEvents.TTS_START, ({ text }) => {
  *     console.log(`開始說話: ${text}`);
  * });
  * 
- * speechService.on('tts-boundary', ({ word }) => {
+ * speechService.on(SpeechEvents.TTS_BOUNDARY, ({ word }) => {
  *     console.log(`當前單字: ${word}`);
  * });
  * 
@@ -147,7 +59,7 @@ export interface SpeechEvents {
  * });
  * 
  * // STT 使用範例
- * speechService.on('stt-result', ({ transcript, isFinal }) => {
+ * speechService.on(SpeechEvents.STT_RESULT, ({ transcript, isFinal }) => {
  *     console.log(`識別結果: ${transcript} (${isFinal ? '最終' : '暫時'})`);
  * });
  * 
@@ -157,7 +69,7 @@ export interface SpeechEvents {
  * });
  * ```
  */
-export class SpeechService extends EventEmitter<SpeechEvents> {
+export class SpeechService extends EventEmitter<any> {
     private config: ConfigManager;
     
     // TTS 資源和狀態
@@ -179,7 +91,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
         
         // 自動初始化
         this.initialize().catch(error => {
-            this.emit('error', {
+            this.emit(SpeechEvents.ERROR, {
                 type: 'tts',
                 error: error as Error,
                 context: 'initialization',
@@ -208,7 +120,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
             }
             
             // 發送 ready 事件
-            this.emit('ready', {
+            this.emit(SpeechEvents.READY, {
                 ttsSupported: support.tts,
                 sttSupported: support.stt,
                 voices: this.ttsResources ? 
@@ -219,7 +131,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
                 timestamp: Date.now()
             });
         } catch (error) {
-            this.emit('error', {
+            this.emit(SpeechEvents.ERROR, {
                 type: 'tts',
                 error: error as Error,
                 context: 'initialize',
@@ -239,22 +151,22 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
         
         // 開始事件
         recognition.onstart = () => {
-            this.emit('stt-audiostart', { timestamp: Date.now() });
+            this.emit(SpeechEvents.STT_AUDIOSTART, { timestamp: Date.now() });
         };
         
         // 語音開始
         recognition.onspeechstart = () => {
-            this.emit('stt-speechstart', { timestamp: Date.now() });
+            this.emit(SpeechEvents.STT_SPEECHSTART, { timestamp: Date.now() });
         };
         
         // 語音結束
         recognition.onspeechend = () => {
-            this.emit('stt-speechend', { timestamp: Date.now() });
+            this.emit(SpeechEvents.STT_SPEECHEND, { timestamp: Date.now() });
         };
         
         // 音訊結束
         recognition.onaudioend = () => {
-            this.emit('stt-audioend', { timestamp: Date.now() });
+            this.emit(SpeechEvents.STT_AUDIOEND, { timestamp: Date.now() });
         };
         
         // 識別結果
@@ -262,7 +174,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
             const result = processRecognitionResult(this.sttState, event);
             this.sttState = result.state;
             
-            this.emit('stt-result', {
+            this.emit(SpeechEvents.STT_RESULT, {
                 transcript: result.transcript,
                 isFinal: result.isFinal,
                 confidence: result.confidence,
@@ -273,14 +185,14 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
         
         // 無匹配
         recognition.onnomatch = () => {
-            this.emit('stt-nomatch', { timestamp: Date.now() });
+            this.emit(SpeechEvents.STT_NOMATCH, { timestamp: Date.now() });
         };
         
         // 錯誤處理
         recognition.onerror = (event: any) => {
             this.sttState = processRecognitionError(this.sttState, event);
             
-            this.emit('error', {
+            this.emit(SpeechEvents.ERROR, {
                 type: 'stt',
                 error: this.sttState.error || event.error,
                 context: 'recognition',
@@ -292,7 +204,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
         recognition.onend = () => {
             const duration = Date.now() - this.sttStartTime;
             
-            this.emit('stt-end', {
+            this.emit(SpeechEvents.STT_END, {
                 finalTranscript: this.sttState.finalTranscript,
                 duration,
                 timestamp: Date.now()
@@ -364,7 +276,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
             this.ttsStartTime = Date.now();
             
             utterance.onstart = () => {
-                this.emit('tts-start', {
+                this.emit(SpeechEvents.TTS_START, {
                     text,
                     voice: this.ttsState.currentVoice,
                     rate: this.ttsState.rate,
@@ -382,7 +294,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
                     currentText: ''
                 };
                 
-                this.emit('tts-end', {
+                this.emit(SpeechEvents.TTS_END, {
                     text,
                     duration,
                     timestamp: Date.now()
@@ -396,7 +308,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
             };
             
             utterance.onpause = () => {
-                this.emit('tts-pause', {
+                this.emit(SpeechEvents.TTS_PAUSE, {
                     text,
                     position: 0,  // elapsedTime not available in standard API
                     timestamp: Date.now()
@@ -404,7 +316,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
             };
             
             utterance.onresume = () => {
-                this.emit('tts-resume', {
+                this.emit(SpeechEvents.TTS_RESUME, {
                     text,
                     position: 0,  // elapsedTime not available in standard API
                     timestamp: Date.now()
@@ -417,7 +329,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
                     event.charIndex + event.charLength
                 );
                 
-                this.emit('tts-boundary', {
+                this.emit(SpeechEvents.TTS_BOUNDARY, {
                     text,
                     charIndex: event.charIndex,
                     charLength: event.charLength,
@@ -427,7 +339,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
             };
             
             utterance.onmark = (event: SpeechSynthesisEvent) => {
-                this.emit('tts-mark', {
+                this.emit(SpeechEvents.TTS_MARK, {
                     text,
                     mark: event.name,
                     timestamp: Date.now()
@@ -440,7 +352,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
                     return;
                 }
                 
-                this.emit('error', {
+                this.emit(SpeechEvents.ERROR, {
                     type: 'tts',
                     error: event.error,
                     context: 'speak',
@@ -452,7 +364,7 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
             this.ttsResources.synth.speak(utterance);
             
         } catch (error) {
-            this.emit('error', {
+            this.emit(SpeechEvents.ERROR, {
                 type: 'tts',
                 error: error as Error,
                 context: 'speak',
@@ -508,14 +420,14 @@ export class SpeechService extends EventEmitter<SpeechEvents> {
                 throw new Error(this.sttState.error);
             }
             
-            this.emit('stt-start', {
+            this.emit(SpeechEvents.STT_START, {
                 language: this.sttState.language,
                 continuous: this.sttState.continuous,
                 timestamp: Date.now()
             });
             
         } catch (error) {
-            this.emit('error', {
+            this.emit(SpeechEvents.ERROR, {
                 type: 'stt',
                 error: error as Error,
                 context: 'startListening',
